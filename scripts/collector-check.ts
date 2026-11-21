@@ -5,12 +5,13 @@
  * 用法（先让服务跑一阵：`pnpm build && pnpm start`，或 `pnpm dev`）：
  *   pnpm collector:check                       # 读 .data/db.sqlite3
  *   pnpm collector:check --db path/to/db.sqlite3 --min-observations 10
- * 只读打开数据库，可以在服务运行时跑。只适用于默认的 better-sqlite3 部署。
+ * 只做读取，可以在服务运行时跑。只适用于默认的 better-sqlite3 部署。
  */
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import process from "node:process"
-import Database from "better-sqlite3"
+import { createDatabase } from "db0"
+import sqlite from "db0/connectors/better-sqlite3"
 import { projectDir } from "../shared/dir"
 import _sources from "../shared/sources.json"
 
@@ -32,19 +33,20 @@ if (!existsSync(dbPath)) {
   process.exit(2)
 }
 
-const db = new Database(dbPath, { readonly: true })
-const has = (table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)
-if (!has("observations") || !has("source_health")) {
+const db = createDatabase(sqlite({ path: dbPath }))
+const all = async (sql: string) => await db.prepare(sql).all() as any[]
+const tables = new Set((await all("SELECT name FROM sqlite_master WHERE type = 'table'")).map(r => r.name))
+if (!tables.has("observations") || !tables.has("source_health")) {
   console.error("库里还没有采集表：服务还没跑过一轮采集")
   process.exit(2)
 }
 
-const obs = new Map((db.prepare(`
+const obs = new Map((await all(`
   SELECT source_id, COUNT(*) AS n, COUNT(DISTINCT observed_at) AS cycles, MIN(observed_at) AS first_at, MAX(observed_at) AS last_at
   FROM observations GROUP BY source_id
-`).all() as any[]).map(r => [r.source_id, r]))
-const items = new Map((db.prepare(`SELECT source_id, COUNT(*) AS n FROM items GROUP BY source_id`).all() as any[]).map(r => [r.source_id, r.n]))
-const health = new Map((db.prepare(`SELECT * FROM source_health`).all() as any[]).map(r => [r.source_id, r]))
+`)).map(r => [r.source_id, r]))
+const items = new Map((await all(`SELECT source_id, COUNT(*) AS n FROM items GROUP BY source_id`)).map(r => [r.source_id, r.n]))
+const health = new Map((await all(`SELECT * FROM source_health`)).map(r => [r.source_id, r]))
 
 const now = Date.now()
 const minutes = (ms: number) => `${Math.round(ms / 60000)}m`

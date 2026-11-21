@@ -62,7 +62,7 @@ describe("/api/s", () => {
   it("没有缓存时现抓、最多返回 30 条、status 为 success，并写入缓存", async () => {
     getterMocks.weibo.mockResolvedValue(news(45))
     const res = await fetchSource("?id=weibo")
-    const body = await res.json()
+    const body = await res.json() as any
     expect(res.status).toBe(200)
     expect(body).toMatchObject({ status: "success", id: "weibo", updatedTime: T0 })
     expect(body.items).toHaveLength(30)
@@ -76,7 +76,7 @@ describe("/api/s", () => {
     getterMocks.weibo.mockResolvedValue(news(3))
     await fetchSource("?id=weibo")
     vi.setSystemTime(T0 + 1 * MIN) // weibo 的 interval 是 2 分钟
-    const body = await (await fetchSource("?id=weibo")).json()
+    const body = await (await fetchSource("?id=weibo")).json() as any
     expect(body).toMatchObject({ status: "success", updatedTime: T0 + 1 * MIN })
     expect(body.items).toHaveLength(3)
     expect(getterMocks.weibo).toHaveBeenCalledTimes(1)
@@ -86,7 +86,7 @@ describe("/api/s", () => {
     getterMocks.weibo.mockResolvedValue(news(3))
     await fetchSource("?id=weibo")
     vi.setSystemTime(T0 + 10 * MIN)
-    const body = await (await fetchSource("?id=weibo")).json()
+    const body = await (await fetchSource("?id=weibo")).json() as any
     expect(body).toMatchObject({ status: "cache", updatedTime: T0 })
     expect(getterMocks.weibo).toHaveBeenCalledTimes(1)
   })
@@ -95,7 +95,7 @@ describe("/api/s", () => {
     getterMocks.weibo.mockResolvedValueOnce(news(3)).mockResolvedValueOnce(news(5))
     await fetchSource("?id=weibo")
     vi.setSystemTime(T0 + 31 * MIN)
-    const body = await (await fetchSource("?id=weibo")).json()
+    const body = await (await fetchSource("?id=weibo")).json() as any
     expect(body).toMatchObject({ status: "success", updatedTime: T0 + 31 * MIN })
     expect(body.items).toHaveLength(5)
     expect(getterMocks.weibo).toHaveBeenCalledTimes(2)
@@ -110,7 +110,7 @@ describe("/api/s", () => {
     await fetchSource("?id=weibo")
     vi.setSystemTime(T0 + 31 * MIN)
     getterMocks.weibo.mockRejectedValueOnce(new Error("upstream down"))
-    const warm = await (await fetchSource("?id=weibo")).json()
+    const warm = await (await fetchSource("?id=weibo")).json() as any
     expect(warm).toMatchObject({ status: "cache" })
     expect(warm.items).toHaveLength(2)
   })
@@ -119,7 +119,7 @@ describe("/api/s", () => {
     getterMocks.weibo.mockResolvedValueOnce(news(2)).mockResolvedValueOnce([])
     await fetchSource("?id=weibo")
     vi.setSystemTime(T0 + 31 * MIN)
-    const body = await (await fetchSource("?id=weibo")).json()
+    const body = await (await fetchSource("?id=weibo")).json() as any
     expect(body.items).toEqual([])
     const row = await db.prepare("SELECT data FROM cache WHERE id = ?").get("weibo") as any
     expect(JSON.parse(row.data)).toHaveLength(2)
