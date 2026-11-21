@@ -14,7 +14,7 @@ import { guarded } from "#/registry/http"
  *   symbol         标的，品种 id「代码.场所」（600519.XSHG、AAPL.XNAS、BTCUSDT.BINANCE），逗号分隔或重复；
  *                  条目或它所在组的任一成员带其中之一就命中
  *   expand=1       同一事件的多条报道每条单独出现；默认聚成一组、每组一行（带 sourcesCount 与 members）：先按 source / category / includeInactive 筛，再在范围里收拢，
- *                  代表行是范围内最早的那条（主条目在范围外时是范围里最早的成员，groupId 仍是主条目的 seq）
+ *                  代表行是范围内最早的那条（主条目在范围外时是范围里最早的成员，groupId 仍是主条目的 seq）；范围 = 来源 / 分类 / 停用 + q + from / to（since 与 cursor 一样是位置条件，不进范围）；标的按组判断
  *   limit          每页条数，1–200，默认 50
  *   cursor         上一页响应的 nextCursor
  *   includeInactive=1  含停用与已删除的源的历史条目

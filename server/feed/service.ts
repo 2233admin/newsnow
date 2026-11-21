@@ -160,8 +160,7 @@ export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>, 
 
 /**
  * SSE 用：一条条目是否符合订阅的筛选（来源、分类、关键词、标的；时间类参数对实时流没有意义）。
- * 标的按条目自己带的算（查询接口按组算：组里任一成员带就命中）：成员带而主条目不带的少见情形里，实时流会推那条成员的 merge 事件，
- * 但不会推主条目；要完整以 GET /api/feed 为准。
+ * 标的：expand=1 按条目自己带的算；默认（每组一行）由实时流另查组（FeedStore.groupHasSymbol），与查询接口一致。
  */
 export function streamMatcher(params: FeedParams, descs: SourceDescriptor[]) {
   const scope = resolveScope(params, descs)
