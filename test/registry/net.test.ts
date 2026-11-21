@@ -25,7 +25,7 @@ describe("assertFetchable", () => {
     await assertFetchable("http://ok.example/", policy(), publicResolver)
   })
 
-  it("iP 字面量（含十进制、十六进制写法、IPv6）按实际地址判断", async () => {
+  it("字面量 IP（含十进制、十六进制写法、IPv6）按实际地址判断", async () => {
     for (const u of ["http://127.0.0.1/", "http://2130706433/", "http://0x7f.1/", "http://[::1]/", "http://169.254.169.254/latest/meta-data", "http://[::ffff:7f00:1]/"])
       await expect(assertFetchable(u, policy(), publicResolver), u).rejects.toThrow(/内网/)
   })

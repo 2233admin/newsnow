@@ -20,7 +20,7 @@ describe("normalizeSpec", () => {
     expect(() => normalizeSpec(null, RSSHUB_BASE)).toThrow(InputError)
   })
 
-  it("rSSHub 路由不能借 new URL(route, base) 跳到别的域名", () => {
+  it("限制 RSSHub 路由不能借 new URL(route, base) 跳到别的域名", () => {
     for (const route of ["//evil.com/x", "http://evil.com/x", "/\\evil.com", "x/y", "/a b", "/a\nb"])
       expect(() => checkRsshubRoute(route, RSSHUB_BASE), route).toThrow(InputError)
     expect(checkRsshubRoute("/github/issue/a/b?limit=5", RSSHUB_BASE)).toBe("/github/issue/a/b?limit=5")

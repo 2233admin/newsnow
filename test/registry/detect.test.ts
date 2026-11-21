@@ -19,7 +19,7 @@ function deps(pages: Record<string, string>) {
 }
 
 describe("detect", () => {
-  it("rSS：识别、取标题、预览 5 条并给出总数", async () => {
+  it("识别 RSS：取标题、取标题、预览 5 条并给出总数", async () => {
     const r = await detect("https://a.example/feed", deps({ "https://a.example/feed": RSS(FEED_ITEMS, "示例 Feed") }))
     expect(r.spec).toEqual({ kind: "rss", url: "https://a.example/feed" })
     expect(r.name).toBe("示例 Feed")
@@ -34,7 +34,7 @@ describe("detect", () => {
     expect(r.items[0].title).toBe("t1")
   })
 
-  it("jSON：猜出条目数组与字段映射", async () => {
+  it("识别 JSON：猜出条目数组与字段映射", async () => {
     const body = JSON.stringify({ code: 0, data: { items: [
       { id: 1, title: "甲", url: "https://a.example/1", created_at: 1763719200 },
       { id: 2, title: "乙", url: "https://a.example/2", created_at: 1763719300 },

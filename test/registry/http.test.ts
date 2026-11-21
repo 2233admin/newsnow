@@ -14,7 +14,7 @@ describe("isLocalRequest（接口只给本机用）", () => {
     for (const h of ["x-forwarded-for", "forwarded", "x-real-ip"]) expect(isLocalRequest("127.0.0.1", { [h]: "1.2.3.4" }, {}), h).toBe(false)
   })
 
-  it("uSER_SOURCES_ALLOW_REMOTE=true 才放开", () => {
+  it("环境变量 USER_SOURCES_ALLOW_REMOTE=true 才放开", () => {
     expect(isLocalRequest("8.8.8.8", {}, { USER_SOURCES_ALLOW_REMOTE: "true" })).toBe(true)
     expect(isLocalRequest("8.8.8.8", {}, { USER_SOURCES_ALLOW_REMOTE: "1" })).toBe(false)
   })
