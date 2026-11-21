@@ -23,6 +23,16 @@ import { canonicalUrl } from "./url"
  */
 
 /** 富化规则的版本。改了规则要加一，回填的「重算标的」模式按它找旧的。 */
+/**
+ * 回填前要求库安静这么久：最近这么久内有采集写入就拒绝（--force 才跳过）。
+ * 5 分钟：采集器每分钟一次心跳，各源按自己的间隔到期才抓（本沙箱 2026-11-22 的日志里 12 个源，每 1–2 分钟总有几个源到期）；
+ * 取到最慢的常见间隔以上，免得源少时服务明明在跑却判成已停。没有更细的依据，待定。
+ */
+export const BACKFILL_QUIET_MS = 5 * 60_000
+
+/** 库里最近一次采集写入在安静窗口之内：服务多半还在跑。 */
+export const collectorLooksActive = (lastWriteAt: number, now: number) => now - lastWriteAt < BACKFILL_QUIET_MS
+
 export const ENRICH_VERSION = 1
 
 interface Working {

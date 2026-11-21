@@ -228,6 +228,16 @@ export class EnrichStore {
     `).all(afterSeq, limit)).map(itemFromRow)
   }
 
+  /**
+   * 采集最近一次写库的时间（毫秒）：source_health 的最近尝试与 items 的最近看到取大者；没有记录是 0。
+   * 回填脚本用它判断服务是不是还在采集（见 BACKFILL_QUIET_MS）。
+   */
+  async lastCollectorWriteAt(): Promise<number> {
+    const health = await this.db.prepare(`SELECT MAX(last_attempt_at) AS t FROM source_health`).get() as { t: number | null } | undefined
+    const items = await this.db.prepare(`SELECT MAX(last_seen_at) AS t FROM items`).get() as { t: number | null } | undefined
+    return Math.max(health?.t ?? 0, items?.t ?? 0)
+  }
+
   async counts(): Promise<{ total: number, pending: number }> {
     const row = await this.db.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN enriched = 0 THEN 1 ELSE 0 END) AS pending FROM items`).get() as { total: number, pending: number | null }
     return { total: row.total, pending: row.pending ?? 0 }
