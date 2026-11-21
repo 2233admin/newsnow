@@ -127,12 +127,16 @@ describe("gET /api/feed 的查询", () => {
     expect(await ids({ includeInactive: true, source: "user:gone" })).toEqual(["user:gone/g1"])
   })
 
-  it("标的筛选未实装：返回空并明说", async () => {
+  it("标的筛选：格式须是「代码.场所」，不认裸代码；没有匹配的返回空（真实筛选见 test/enrich/）", async () => {
     const w = await seeded()
-    const res = await w.service.query({ symbol: "600519" })
+    const res = await w.service.query({ symbol: "600519.XSHG" })
     expect(res.items).toEqual([])
-    expect(res.unimplemented).toEqual(["symbol"])
-    expect((await w.service.query({})).unimplemented).toBeUndefined()
+    expect(res).not.toHaveProperty("unimplemented")
+    for (const bad of ["600519", "aapl", "AAPL.", ".XNAS", "AAPL XNAS", "600519.SH"]) {
+      await expect(w.service.query({ symbol: bad })).rejects.toBeInstanceOf(InputError)
+    }
+    // 小写的标准写法会被规范成大写
+    await expect(w.service.query({ symbol: "aapl.xnas" })).resolves.toMatchObject({ items: [] })
   })
 
   it("limit 与 cursor 的入参校验", async () => {
@@ -261,12 +265,12 @@ describe("游标翻页：不重复、不遗漏", () => {
     }) as typeof w.db.prepare
     const rare = await small.query({ source: "weibo" })
     expect(rare.items.map(keyOf)).toEqual(["weibo/rare0", "weibo/rare1", "weibo/rare2", "weibo/rare3", "weibo/rare4"])
-    expect(statements.filter(q => q.includes("ORDER BY"))).toHaveLength(2) // 窗口里没凑够 → 整查询
+    expect(statements.filter(q => q.includes("ORDER BY feed_ts"))).toHaveLength(2) // 窗口里没凑够 → 整查询
     statements.length = 0
     const wide = await small.query({ source: "jin10", limit: 50 })
     expect(wide.items).toHaveLength(50)
     expect(wide.nextCursor).toBeTruthy()
-    expect(statements.filter(q => q.includes("ORDER BY"))).toHaveLength(1) // 窗口里凑够一页，不用整查询
+    expect(statements.filter(q => q.includes("ORDER BY feed_ts"))).toHaveLength(1) // 窗口里凑够一页，不用整查询
     // 与不带窗口的结果逐条一致
     const full = await w.service.query({ source: "jin10", limit: 50 })
     expect(wide.items).toEqual(full.items)

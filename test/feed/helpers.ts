@@ -2,6 +2,7 @@ import { createDatabase } from "db0"
 import sqlite from "db0/connectors/better-sqlite3"
 import { ObservationStore } from "#/collector/store"
 import type { ObservedRow } from "#/collector/store"
+import { createEnricher } from "#/enrich/enrich"
 import { createFeedService } from "#/feed/service"
 import { FeedStore } from "#/feed/store"
 import type { SourceDescriptor } from "#/registry/registry"
@@ -31,15 +32,20 @@ export function descriptors(over: SourceDescriptor[] = []): SourceDescriptor[] {
   ]
 }
 
-/** 内存库里的观测库 + 信息流查询；descs 可在测试里改。 */
-export async function feedWorld(descs: SourceDescriptor[] = descriptors()) {
+/**
+ * 内存库里的观测库 + 信息流查询；descs 可在测试里改。
+ * 默认不装富化器（旧的测试用同一个标题、同一个链接造多个源的条目，装了会被并成一组）；富化的测试用 `enrich: true`。
+ */
+export async function feedWorld(descs: SourceDescriptor[] = descriptors(), opts: { enrich?: boolean } = {}) {
   const db = createDatabase(sqlite({ name: ":memory:" }))
   const store = new ObservationStore(db)
   await store.init()
+  const enricher = createEnricher(db)
+  if (opts.enrich) store.setEnricher(enricher)
   const feedStore = new FeedStore(db)
   const state = { descs }
   const service = createFeedService({ store: feedStore, describe: async () => state.descs, clock: () => T0 + 1000 })
-  return { db, store, feedStore, service, state }
+  return { db, store, feedStore, service, state, enricher }
 }
 
 /** 一次采集落库：sourceId 的这些条目在 observedAt 时刻被看到。 */

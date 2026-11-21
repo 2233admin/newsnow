@@ -58,8 +58,8 @@ export function createMcpServer({ feed, actions, caller }: McpDeps) {
 
   server.registerTool("query_feed", {
     title: "查询新闻流",
-    description: "查询已入库的新闻，最新的在前。按时间范围、来源、分类、关键词筛选，游标分页；返回 items、nextCursor（null 表示到底）与 latestSeq。"
-      + "symbol（标的）筛选尚未实装，给了会返回空并在 unimplemented 里标明。",
+    description: "查询已入库的新闻，最新的在前。按时间范围、来源、分类、关键词、标的筛选，游标分页；返回 items、nextCursor（null 表示到底）与 latestSeq。"
+      + "每条带 cleanTitle（清洗后的标题）与 symbols（识别出的标的）；同一事件的多条报道默认聚成一行（主条目，带 sourcesCount 与 members），expand 为 true 时每条单独出现。",
     inputSchema: {
       from: time.optional().describe("排序时间下限（含）"),
       to: time.optional().describe("排序时间上限（不含）"),
@@ -67,7 +67,8 @@ export function createMcpServer({ feed, actions, caller }: McpDeps) {
       source: list.optional().describe("来源 id；带 * 的是前缀，如 user:* 是全部用户源"),
       category: list.optional().describe("分类，如 finance、tech、china，或用户源自己填的分类"),
       q: z.string().optional().describe("关键词，空白分隔，标题须包含每一个词"),
-      symbol: list.optional().describe("标的代码（未实装）"),
+      symbol: list.optional().describe("标的，品种 id「代码.场所」：600519.XSHG（A 股，场所 XSHG 沪、XSHE 深、BJSE 北）、AAPL.XNAS（美股，场所是上市交易所 MIC）、BTCUSDT.BINANCE（加密币）"),
+      expand: z.boolean().optional().describe("同一事件的多条报道每条单独出现；默认聚成一组只出主条目"),
       limit: z.number().int().min(1).max(200).optional().describe("每页条数，默认 50"),
       cursor: z.string().optional().describe("上一页返回的 nextCursor，原样传回"),
       includeInactive: z.boolean().optional().describe("含停用与已删除的源的历史条目"),

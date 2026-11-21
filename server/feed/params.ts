@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer"
 import type { FeedCursor } from "./store"
+import { SYMBOL_ID } from "#/enrich/symbols"
 import { InputError } from "#/registry/spec"
 
 /**
@@ -24,7 +25,7 @@ export interface FeedParams {
   /** 精确 id 或 `前缀*`（如 `user:*`）；空 = 不按来源限 */
   source: string[]
   category: string[]
-  /** 标的（模块 5 富化后才有数据）；给了就返回空，并在响应里标明未实装 */
+  /** 标的，品种 id「代码.场所」（600519.XSHG、AAPL.XNAS、BTCUSDT.BINANCE）；条目或它所在组的任一成员带其中之一就命中 */
   symbol: string[]
   keywords: string[]
   from?: number
@@ -34,6 +35,8 @@ export interface FeedParams {
   cursor?: FeedCursor
   /** 把停用与已删除的源的历史条目也算进来 */
   includeInactive: boolean
+  /** 展开：同一事件的多条报道每条单独出现；默认每组只出主条目一行 */
+  expand: boolean
 }
 
 type Raw = Record<string, unknown>
@@ -49,6 +52,15 @@ function list(value: unknown, label: string, split = ","): string[] {
   if (unique.length > MAX_LIST) throw new InputError(`${label} 最多 ${MAX_LIST} 项`)
   if (unique.some(v => v.length > MAX_ITEM_LENGTH)) throw new InputError(`${label} 的每一项最长 ${MAX_ITEM_LENGTH} 个字符`)
   return unique
+}
+
+/** 标的：转大写、去重，格式须是「代码.场所」（不认裸代码：同一个六位数在沪深可能是两只）。 */
+function symbols(value: unknown): string[] {
+  const out = list(value, "symbol").map(v => v.toUpperCase())
+  for (const v of out) {
+    if (!SYMBOL_ID.test(v)) throw new InputError(`symbol「${v}」要写成「代码.场所」，如 600519.XSHG、AAPL.XNAS、BTCUSDT.BINANCE`)
+  }
+  return [...new Set(out)]
 }
 
 /** 毫秒数（数字或数字串）或日期串（ISO 8601 等 Date.parse 认得的）。 */
@@ -95,7 +107,7 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
   return {
     source: list(raw.source, "source"),
     category: list(raw.category, "category"),
-    symbol: list(raw.symbol, "symbol"),
+    symbol: symbols(raw.symbol),
     keywords,
     from,
     to,
@@ -103,5 +115,6 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
     limit,
     cursor: typeof raw.cursor === "string" && raw.cursor ? decodeCursor(raw.cursor) : undefined,
     includeInactive: bool(raw.includeInactive),
+    expand: bool(raw.expand),
   }
 }

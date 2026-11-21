@@ -105,8 +105,10 @@ describe("信息流的 HTTP 接口", () => {
     expect(first.nextCursor).toBeTruthy()
     const second: any = await (await fetch(url(`/api/feed?limit=2&source=jin10&cursor=${encodeURIComponent(first.nextCursor)}`))).json()
     expect(second.items.map((i: any) => i.itemId)).toEqual(["q2", "q3"])
-    const sym: any = await (await fetch(url("/api/feed?symbol=600519"))).json()
-    expect(sym).toMatchObject({ items: [], unimplemented: ["symbol"] })
+    expect((await fetch(url("/api/feed?symbol=600519"))).status).toBe(400)
+    const sym: any = await (await fetch(url("/api/feed?symbol=600519.XSHG"))).json()
+    expect(sym.items).toEqual([])
+    expect(sym).not.toHaveProperty("unimplemented")
   })
 
   it("sSE：新条目入库后推到；断线后带 Last-Event-ID 续上，不丢不重", async () => {

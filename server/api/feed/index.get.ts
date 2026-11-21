@@ -10,8 +10,10 @@ import { guarded } from "#/registry/http"
  *   since          入库时间 ≥ since 的（拉新；含端点，客户端按 seq 去重）
  *   source         来源 id，逗号分隔或重复；`user:*` 这种带 * 的是前缀
  *   category       分类，逗号分隔或重复
- *   q              关键词，空白分隔，标题须包含每一个词
- *   symbol         标的（待 #2188 富化；现在返回空并在 unimplemented 里标明）
+ *   q              关键词，空白分隔，原始标题或清洗后的标题须包含每一个词
+ *   symbol         标的，品种 id「代码.场所」（600519.XSHG、AAPL.XNAS、BTCUSDT.BINANCE），逗号分隔或重复；
+ *                  条目或它所在组的任一成员带其中之一就命中
+ *   expand=1       同一事件的多条报道每条单独出现；默认聚成一组，只出主条目一行（带 sourcesCount 与 members）
  *   limit          每页条数，1–200，默认 50
  *   cursor         上一页响应的 nextCursor
  *   includeInactive=1  含停用与已删除的源的历史条目

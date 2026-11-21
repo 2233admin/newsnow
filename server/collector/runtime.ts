@@ -2,6 +2,7 @@ import process from "node:process"
 import { createCollector } from "./collect"
 import { readCollectorConfig } from "./config"
 import { ObservationStore } from "./store"
+import { createEnricher } from "#/enrich/enrich"
 import { getRegistry } from "#/registry/runtime"
 
 /**
@@ -13,8 +14,11 @@ let storePromise: Promise<ObservationStore> | undefined
 
 export function getObservationStore() {
   storePromise ??= (async () => {
-    const store = new ObservationStore(useDatabase())
+    const db = useDatabase()
+    const store = new ObservationStore(db)
     if (process.env.INIT_TABLE !== "false") await store.init()
+    // 写库时同步富化（标题清洗、标的识别、去重分组，#2188）；ENRICH_ENABLED=false 关掉，条目留 enriched = 0，以后可回填
+    if (process.env.ENRICH_ENABLED !== "false") store.setEnricher(createEnricher(db))
     return store
   })().catch((e) => {
     storePromise = undefined
