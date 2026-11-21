@@ -3,6 +3,7 @@ import { detect, runPreview } from "./detect"
 import type { Preview } from "./detect"
 import { assertAddressShape, assertFetchable } from "./net"
 import type { NetPolicy, Resolver } from "./net"
+import { exportOpml, parseOpml } from "./opml"
 import {
   InputError,
   MAX_USER_SOURCES,
@@ -13,6 +14,7 @@ import {
   normalizeName,
   normalizeSpec,
   slugify,
+  specAddress,
   toSourceId,
 } from "./spec"
 import type { UserSourceConfig, UserSourceSpec } from "./spec"
@@ -26,6 +28,13 @@ export interface UserSourceView extends StoredUserSource {
   health: HealthRecord | null
 }
 
+export interface ImportResult {
+  imported: string[]
+  replaced: string[]
+  skipped: { name: string, reason: string }[]
+  failed: { name: string, error: string }[]
+}
+
 export interface ServiceDeps {
   store: UserSourceStore
   observations: ObservationStore
@@ -34,6 +43,8 @@ export interface ServiceDeps {
   resolver?: Resolver
   clock?: () => number
 }
+
+const addressOf = (spec: UserSourceSpec) => `${spec.kind === "rsshub" ? "rsshub" : "url"}:${specAddress(spec)}`
 
 /**
  * 用户源的服务层：HTTP 处理函数只做「只给本机」的检查与错误翻译，业务都在这里，方便不起服务就测。
@@ -148,6 +159,60 @@ export function createSourceService(deps: ServiceDeps) {
       assertSlug(slug)
       if (!(await store.delete(slug))) throw new InputError("没有这个用户源", 404)
       await observations.deleteHealth(toSourceId(slug))
+    },
+
+    async exportOpml(): Promise<string> {
+      return exportOpml(await store.list(), RSSHUB_BASE, new Date(clock()))
+    },
+
+    /**
+     * 导入 OPML。带 katana:slug 的按 slug 对应：已存在时 skip（默认）保留现有，replace 用文件里的覆盖；
+     * 没有 katana:slug 的（别的阅读器导出的）按地址去重，已有同地址的跳过，新的生成 slug。
+     */
+    async importOpml(xml: string, onConflict: "skip" | "replace" = "skip"): Promise<ImportResult> {
+      const entries = parseOpml(xml)
+      const result: ImportResult = { imported: [], replaced: [], skipped: [], failed: [] }
+      const existing = await store.list()
+      const addresses = new Set(existing.map(s => addressOf(s.spec)))
+      const slugs = new Set(existing.map(s => s.slug))
+      let count = existing.length
+      for (const entry of entries) {
+        const label = entry.name || entry.slug || "(无名)"
+        try {
+          if (entry.error) throw new InputError(entry.error)
+          const spec = checkSpec(entry.spec)
+          const config = {
+            name: normalizeName(entry.name),
+            category: normalizeCategory(entry.category),
+            interval: normalizeInterval(entry.interval),
+            enabled: normalizeEnabled(entry.enabled),
+            spec,
+          }
+          if (entry.slug !== undefined && slugs.has(assertSlug(entry.slug))) {
+            if (onConflict === "skip") {
+              result.skipped.push({ name: label, reason: `${toSourceId(entry.slug)} 已存在` })
+              continue
+            }
+            await store.update({ ...config, slug: entry.slug }, clock())
+            await observations.deleteHealth(toSourceId(entry.slug))
+            result.replaced.push(toSourceId(entry.slug))
+            continue
+          }
+          if (entry.slug === undefined && addresses.has(addressOf(spec))) {
+            result.skipped.push({ name: label, reason: "已有相同地址的源" })
+            continue
+          }
+          if (count + 1 > MAX_USER_SOURCES) throw new InputError(`用户源已达上限 ${MAX_USER_SOURCES}`)
+          const slug = await uniqueSlug(entry.slug, config.name, spec, config)
+          slugs.add(slug)
+          addresses.add(addressOf(spec))
+          count++
+          result.imported.push(toSourceId(slug))
+        } catch (e) {
+          result.failed.push({ name: label, error: e instanceof Error ? e.message : String(e) })
+        }
+      }
+      return result
     },
   }
   return service
