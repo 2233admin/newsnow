@@ -1,3 +1,4 @@
+import type { Source } from "@shared/types"
 import { buildGetter } from "./adapters"
 import type { FetchText } from "./adapters"
 import { isUserSourceId, toSourceId } from "./spec"
@@ -17,10 +18,24 @@ import type { SourceGetters, SourceMetas } from "#/collector/collect"
 export interface Registry {
   /** 当前要采集的源：内置 + 已启用的用户源 */
   snapshot: () => Promise<{ sources: SourceMetas, getters: SourceGetters }>
+  /** 信息流用的源说明：id、显示名、分类、是否在采集；用户源含停用的（#2186） */
+  describe: () => Promise<SourceDescriptor[]>
 }
 
+export interface SourceDescriptor {
+  id: string
+  name: string
+  /** 内置源是 shared/sources.json 的 column（china、tech、finance…），没有的是空串；用户源是用户填的分类 */
+  category: string
+  builtin: boolean
+  /** 内置源恒为 true；用户源是启停开关。停用与删除的源的历史条目默认不进信息流。 */
+  enabled: boolean
+}
+
+export type BuiltinSourceMeta = Pick<Source, "interval" | "redirect"> & Partial<Pick<Source, "name" | "title" | "column">>
+
 export interface RegistryDeps {
-  builtinSources: SourceMetas
+  builtinSources: Record<string, BuiltinSourceMeta>
   builtinGetters: SourceGetters
   store: UserSourceStore
   fetchText: FetchText
@@ -34,8 +49,23 @@ export function createRegistry(deps: RegistryDeps): Registry {
   if (clash) throw new Error(`内置源 id ${clash} 占用了用户源的命名空间 user:`)
 
   return {
+    async describe() {
+      const out: SourceDescriptor[] = []
+      for (const [id, meta] of Object.entries(builtinSources)) {
+        // redirect 是别名，不采集，库里没有它的条目
+        if (meta.redirect) continue
+        out.push({ id, name: [meta.name ?? id, meta.title].filter(Boolean).join(" "), category: meta.column ?? "", builtin: true, enabled: true })
+      }
+      try {
+        for (const user of await store.list()) out.push({ id: toSourceId(user.slug), name: user.name, category: user.category, builtin: false, enabled: user.enabled })
+      } catch (e) {
+        log.warn("read user sources failed, describing built-in sources only", e)
+      }
+      return out
+    },
+
     async snapshot() {
-      const sources: SourceMetas = { ...builtinSources }
+      const sources: SourceMetas = { ...(builtinSources as SourceMetas) }
       const getters: SourceGetters = { ...builtinGetters }
       let users: Awaited<ReturnType<UserSourceStore["list"]>> = []
       try {

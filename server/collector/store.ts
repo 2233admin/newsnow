@@ -4,7 +4,11 @@ import type { NewsItem } from "@shared/types"
 /**
  * 观测库：每次采集都落库，不覆盖（#2184）。
  *
- * - items：每条新闻一行，(source_id, item_id) 唯一；first_seen_at 是入流时间，永久保留。
+ * - items：每条新闻一行，(source_id, item_id) 唯一；永久保留。三个时间/序号字段各管一件事（#2186）：
+ *   - first_seen_at：第一次被采集到的时间（毫秒），不变。
+ *   - feed_ts：信息流的排序时间，插入时定下、之后不再改：有 pub_date 用 pub_date，没有（热榜、没带时间的源）用 first_seen_at；
+ *     pub_date 晚于 first_seen_at 的（源站时钟快、时区解析偏差）按 first_seen_at 算，免得一条条目永远钉在流的顶端。
+ *   - seq：入库顺序号（AUTOINCREMENT，单调、不复用），新条目入库时分配，SSE 的 Last-Event-ID 与「拉新」靠它。
  * - observations：每次看到某条目一行（名次与附加信息），按保留天数清理。
  * - source_health：每个源一行，最近成功时间、连续失败次数、最近错误。
  *
@@ -15,7 +19,7 @@ import type { NewsItem } from "@shared/types"
 
 /** D1 单条语句最多 100 个绑定参数（https://developers.cloudflare.com/d1/platform/limits/ ，读取日期 2026-11-21）。 */
 const D1_MAX_PARAMS = 100
-const ITEM_COLUMNS = 7
+const ITEM_COLUMNS = 8
 const OBSERVATION_COLUMNS = 5
 const ITEM_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / ITEM_COLUMNS)
 const OBSERVATION_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / OBSERVATION_COLUMNS)
@@ -55,6 +59,14 @@ export interface ItemRecord {
   firstSeenAt: number
   lastSeenAt: number
 }
+
+/** 新入库的条目（给信息流与 SSE 用）：比 ItemRecord 多了 seq 与排序时间。 */
+export interface IngestedItem extends ItemRecord {
+  seq: number
+  feedTs: number
+}
+
+export type IngestListener = (items: IngestedItem[]) => void
 
 export interface ObservationRecord {
   observedAt: number
@@ -133,22 +145,67 @@ export function toObservedRows(items: NewsItem[], limit: number): ObservedRow[] 
   return rows
 }
 
+/** 信息流的排序时间，见文件头。 */
+export function feedTimestamp(pubDate: number | null, firstSeenAt: number) {
+  return pubDate !== null && pubDate < firstSeenAt ? pubDate : firstSeenAt
+}
+
+function ITEMS_DDL(name: string) {
+  return `
+  CREATE TABLE IF NOT EXISTS ${name} (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    url TEXT,
+    pub_date INTEGER,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    feed_ts INTEGER NOT NULL,
+    UNIQUE (source_id, item_id)
+  )
+`
+}
+
+export function itemFromRow(r: Record<string, any>): IngestedItem {
+  return {
+    seq: r.seq,
+    sourceId: r.source_id,
+    itemId: r.item_id,
+    title: r.title,
+    url: r.url,
+    pubDate: r.pub_date,
+    firstSeenAt: r.first_seen_at,
+    lastSeenAt: r.last_seen_at,
+    feedTs: r.feed_ts,
+  }
+}
+
+export const ITEM_SELECT = `seq, source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at, feed_ts`
+
 export class ObservationStore {
+  private listeners = new Set<IngestListener>()
+  /** 入库 + 取回新条目 + 通知要在一个临界区里：否则两个源的批次交错，通知的 seq 顺序会和入库顺序不同，按「最大 seq」续传的客户端会漏条。 */
+  private ingestChain: Promise<unknown> = Promise.resolve()
+
   constructor(private db: Database) {}
 
+  /** 订阅新条目入库（采集器写库处触发，不轮询库）。返回取消订阅函数。监听器抛错不影响入库。 */
+  onIngest(listener: IngestListener) {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  private serialized<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.ingestChain.then(fn, fn)
+    this.ingestChain = run.catch(() => {})
+    return run
+  }
+
   async init() {
-    await this.db.prepare(`
-      CREATE TABLE IF NOT EXISTS items (
-        source_id TEXT NOT NULL,
-        item_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        url TEXT,
-        pub_date INTEGER,
-        first_seen_at INTEGER NOT NULL,
-        last_seen_at INTEGER NOT NULL,
-        PRIMARY KEY (source_id, item_id)
-      )
-    `).run()
+    await this.migrateItems()
     await this.db.prepare(`
       CREATE TABLE IF NOT EXISTS observations (
         source_id TEXT NOT NULL,
@@ -161,6 +218,10 @@ export class ObservationStore {
     `).run()
     // 按保留天数清理时按时间范围删除
     await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_observations_observed_at ON observations (observed_at)`).run()
+    // 信息流：按 (feed_ts, source_id, item_id) 倒序翻页；单源翻页；按入库时间拉新、找刚入库的一批（见 recordObservations）
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_feed ON items (feed_ts, source_id, item_id)`).run()
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_source_feed ON items (source_id, feed_ts, item_id)`).run()
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_first_seen ON items (first_seen_at)`).run()
     await this.db.prepare(`
       CREATE TABLE IF NOT EXISTS source_health (
         source_id TEXT PRIMARY KEY,
@@ -175,22 +236,66 @@ export class ObservationStore {
   }
 
   /**
+   * items 表：#2184 的旧表没有 seq 与 feed_ts，也没有自增主键，这里重建一次（建新表、按首次出现的先后拷过去、换名）。
+   * 每一步都能重跑：中途挂了，下次启动会接着做（items 不在而 items_v2 在，说明只差改名）。
+   * 旧表里条目的 feed_ts 按同一条规则补出来，seq 按首次出现的先后顺序分配。
+   */
+  private async migrateItems() {
+    const tables = new Set(rowsOf<{ name: string }>(await this.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()).map(r => r.name))
+    if (!tables.has("items") && tables.has("items_v2")) {
+      await this.db.prepare(`ALTER TABLE items_v2 RENAME TO items`).run()
+    } else if (!tables.has("items")) {
+      await this.db.prepare(ITEMS_DDL("items")).run()
+    } else {
+      const columns = rowsOf<{ name: string }>(await this.db.prepare(`PRAGMA table_info(items)`).all()).map(r => r.name)
+      if (columns.includes("seq")) return
+      await this.db.prepare(`DROP TABLE IF EXISTS items_v2`).run()
+      await this.db.prepare(ITEMS_DDL("items_v2")).run()
+      await this.db.prepare(`
+        INSERT INTO items_v2 (source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at, feed_ts)
+        SELECT source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at,
+          CASE WHEN pub_date IS NOT NULL AND pub_date < first_seen_at THEN pub_date ELSE first_seen_at END
+        FROM items ORDER BY first_seen_at, source_id, item_id
+      `).run()
+      await this.db.prepare(`DROP TABLE items`).run()
+      await this.db.prepare(`ALTER TABLE items_v2 RENAME TO items`).run()
+    }
+  }
+
+  /**
    * 落一次采集：每条写 items（首次出现记 first_seen_at，之后只更新标题、链接、last_seen_at，发布时间有值才覆盖）
    * 与 observations（本次名次）。同一 (source, item, observedAt) 重复写入会被忽略，所以重试是幂等的。
    */
-  async recordObservations(sourceId: string, rows: ObservedRow[], observedAt: number) {
-    for (const part of chunk(rows, ITEM_ROWS_PER_STATEMENT)) {
-      const params = part.flatMap(r => [sourceId, r.itemId, r.title, r.url, r.pubDate, observedAt, observedAt])
-      await this.db.prepare(`
-        INSERT INTO items (source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at)
-        VALUES ${placeholders(ITEM_COLUMNS, part.length)}
-        ON CONFLICT (source_id, item_id) DO UPDATE SET
-          title = excluded.title,
-          url = COALESCE(excluded.url, items.url),
-          pub_date = COALESCE(excluded.pub_date, items.pub_date),
-          last_seen_at = excluded.last_seen_at
-      `).run(...params)
-    }
+  async recordObservations(sourceId: string, rows: ObservedRow[], observedAt: number): Promise<IngestedItem[]> {
+    const fresh = await this.serialized(async () => {
+      for (const part of chunk(rows, ITEM_ROWS_PER_STATEMENT)) {
+        const params = part.flatMap(r => [sourceId, r.itemId, r.title, r.url, r.pubDate, observedAt, observedAt, feedTimestamp(r.pubDate, observedAt)])
+        await this.db.prepare(`
+          INSERT INTO items (source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at, feed_ts)
+          VALUES ${placeholders(ITEM_COLUMNS, part.length)}
+          ON CONFLICT (source_id, item_id) DO UPDATE SET
+            title = excluded.title,
+            url = COALESCE(excluded.url, items.url),
+            pub_date = COALESCE(excluded.pub_date, items.pub_date),
+            last_seen_at = excluded.last_seen_at
+        `).run(...params)
+      }
+      // 这一批里第一次出现的 = first_seen_at 等于本次 observedAt 的（走 idx_items_first_seen）。
+      // 同一批重试会再取到同一批，seq 不变，客户端按 seq 去重。
+      const items = rowsOf<Record<string, any>>(await this.db.prepare(`
+        SELECT ${ITEM_SELECT} FROM items WHERE first_seen_at = ? AND source_id = ? ORDER BY seq
+      `).all(observedAt, sourceId)).map(itemFromRow)
+      if (items.length) {
+        for (const listener of [...this.listeners]) {
+          try {
+            listener(items)
+          } catch (e) {
+            logger.warn("ingest listener failed", e)
+          }
+        }
+      }
+      return items
+    })
     for (const part of chunk(rows, OBSERVATION_ROWS_PER_STATEMENT)) {
       const params = part.flatMap(r => [sourceId, r.itemId, observedAt, r.rank, r.extra])
       await this.db.prepare(`
@@ -198,6 +303,7 @@ export class ObservationStore {
         VALUES ${placeholders(OBSERVATION_COLUMNS, part.length)}
       `).run(...params)
     }
+    return fresh
   }
 
   async recordSuccess(sourceId: string, attemptAt: number, itemCount: number) {
