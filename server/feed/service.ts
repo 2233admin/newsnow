@@ -3,6 +3,19 @@ import type { FeedParams } from "./params"
 import type { FeedStore } from "./store"
 import type { SourceDescriptor } from "#/registry/registry"
 import type { IngestedItem } from "#/collector/store"
+import type { GroupInfo, GroupMember } from "#/enrich/store"
+
+/** 一组里除主条目外的成员（同一事件的其他报道）。 */
+export interface FeedMemberView {
+  seq: number
+  sourceId: string
+  sourceName: string
+  itemId: string
+  url: string | null
+  origUrl: string | null
+  pubDate: number | null
+  firstSeenAt: number
+}
 
 /** 信息流里一条新闻的对外形状（GET /api/feed 与 SSE 共用）。 */
 export interface FeedItemView {
@@ -13,8 +26,23 @@ export interface FeedItemView {
   sourceName: string
   category: string
   itemId: string
+  /** 原始标题（原样入库，不改） */
   title: string
+  /** 清洗后的标题：解码了 HTML 实体、去掉了 Google News 的「 - 来源」后缀；还没富化的等于 title */
+  cleanTitle: string
   url: string | null
+  /** 解出的原文链接（目前只有 Google News 旧格式链接解得出；新格式解不出，是 null，前端用 url） */
+  origUrl: string | null
+  /** 识别出的标的（品种 id「代码.场所」），没有是空数组 */
+  symbols: string[]
+  /** 所在组的主条目 seq；自己是主条目或没有重复的就是自己的 seq */
+  groupId: number
+  /** 不为 null 时这条是 groupId 那一组的成员（成员行只在 expand=1 时出现） */
+  dupOf: number | null
+  /** 这一组的来源数（不同 source_id 的个数，含主条目），没有重复的是 1 */
+  sourcesCount: number
+  /** 主条目带上除自己外的成员（至多 50 个，按入库先后）；成员行没有 */
+  members: FeedMemberView[]
   /** 源站给的发布时间，没有是 null */
   pubDate: number | null
   /** 第一次被采集到的时间 */
@@ -33,8 +61,6 @@ export interface FeedResponse {
    */
   latestSeq: number
   now: number
-  /** 收到了但还没有实现的筛选（目前只有 symbol，等 #2188 富化）；出现时结果按「没有匹配」返回 */
-  unimplemented?: string[]
 }
 
 export interface FeedServiceDeps {
@@ -95,7 +121,20 @@ export function safeUrl(raw: string | null): string | null {
   }
 }
 
-export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>): FeedItemView {
+function memberView(m: GroupMember, byId: Map<string, SourceDescriptor>): FeedMemberView {
+  return {
+    seq: m.seq,
+    sourceId: m.sourceId,
+    sourceName: byId.get(m.sourceId)?.name ?? m.sourceId,
+    itemId: m.itemId,
+    url: safeUrl(m.url),
+    origUrl: safeUrl(m.origUrl),
+    pubDate: m.pubDate,
+    firstSeenAt: m.firstSeenAt,
+  }
+}
+
+export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>, group?: GroupInfo): FeedItemView {
   const d = byId.get(item.sourceId)
   return {
     seq: item.seq,
@@ -104,20 +143,34 @@ export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>):
     category: d?.category ?? "",
     itemId: item.itemId,
     title: item.title,
+    cleanTitle: item.cleanTitle ?? item.title,
     url: safeUrl(item.url),
+    origUrl: safeUrl(item.origUrl),
+    symbols: item.symbols,
+    groupId: item.dupOf ?? item.seq,
+    dupOf: item.dupOf,
+    sourcesCount: group?.sourcesCount ?? 1,
+    members: item.dupOf === null && group ? group.members.map(m => memberView(m, byId)) : [],
     pubDate: item.pubDate,
     firstSeenAt: item.firstSeenAt,
     feedTs: item.feedTs,
   }
 }
 
-/** SSE 用：一条条目是否符合订阅的筛选（来源、分类、关键词；时间类参数对实时流没有意义）。 */
+/**
+ * SSE 用：一条条目是否符合订阅的筛选（来源、分类、关键词、标的；时间类参数对实时流没有意义）。
+ * 标的按条目自己带的算（查询接口按组算：组里任一成员带就命中）：成员带而主条目不带的少见情形里，实时流会推那条成员的 merge 事件，
+ * 但不会推主条目；要完整以 GET /api/feed 为准。
+ */
 export function streamMatcher(params: FeedParams, descs: SourceDescriptor[]) {
   const scope = resolveScope(params, descs)
   const allowed = scope ? new Set(scope) : undefined
   const keywords = params.keywords.map(asciiLower)
+  const symbols = new Set(params.symbol)
   return (item: IngestedItem) =>
-    (!allowed || allowed.has(item.sourceId)) && keywords.every(k => asciiLower(item.title).includes(k))
+    (!allowed || allowed.has(item.sourceId))
+    && keywords.every(k => asciiLower(item.title).includes(k) || asciiLower(item.cleanTitle ?? "").includes(k))
+    && (!symbols.size || item.symbols.some(s => symbols.has(s)))
 }
 
 export function createFeedService(deps: FeedServiceDeps) {
@@ -130,18 +183,17 @@ export function createFeedService(deps: FeedServiceDeps) {
       // 先读 latestSeq 再读页：读页之后入库的条目 seq 一定更大，会被 SSE 补发
       const latestSeq = await store.latestSeq()
       const now = clock()
-      if (params.symbol.length) return { items: [], nextCursor: null, latestSeq, now, unimplemented: ["symbol"] }
       const descs = await describe()
       const sourceIds = resolveScope(params, descs)
-      const { rows, hasMore } = await store.page(
-        { sourceIds, from: params.from, to: params.to, since: params.since, keywords: params.keywords },
+      const { rows, hasMore, groups } = await store.page(
+        { sourceIds, from: params.from, to: params.to, since: params.since, keywords: params.keywords, symbols: params.symbol, expand: params.expand },
         params.limit,
         params.cursor,
       )
       const byId = new Map(descs.map(d => [d.id, d]))
       const last = rows.at(-1)
       return {
-        items: rows.map(r => toView(r, byId)),
+        items: rows.map(r => toView(r, byId, groups.get(r.dupOf ?? r.seq))),
         nextCursor: hasMore && last ? encodeCursor({ feedTs: last.feedTs, sourceId: last.sourceId, itemId: last.itemId }) : null,
         latestSeq,
         now,

@@ -108,15 +108,19 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     await client.close()
   })
 
-  it("query_feed：返回入库的条目，标的筛选标明未实装", async () => {
+  it("query_feed：返回入库的条目；标的筛选是真的，坏格式作为工具失败返回", async () => {
     const store = await getObservationStore()
     await store.recordObservations("jin10", [row("m1", { title: "黄金 突破" }), row("m2", { title: "原油 回落" })], T0)
     const client = await connect()
     const q = await call(client, "query_feed", { q: "黄金", source: "jin10" })
     expect(q.data.items.map((i: any) => i.itemId)).toEqual(["m1"])
     expect(q.data.latestSeq).toBeGreaterThan(0)
-    const sym = await call(client, "query_feed", { symbol: "600519" })
-    expect(sym.data).toMatchObject({ items: [], unimplemented: ["symbol"] })
+    await store.recordObservations("jin10", [row("m3", { title: "贵州茅台公告回购股份" })], T0 + 1)
+    const sym = await call(client, "query_feed", { symbol: "600519.XSHG" })
+    expect(sym.data.items.map((i: any) => [i.itemId, i.symbols])).toEqual([["m3", ["600519.XSHG"]]])
+    expect(sym.data).not.toHaveProperty("unimplemented")
+    const bad = await client.callTool({ name: "query_feed", arguments: { symbol: "600519" } })
+    expect(bad.isError).toBe(true)
     const paged = await call(client, "query_feed", { limit: 1 })
     expect(paged.data.nextCursor).toBeTruthy()
     await client.close()

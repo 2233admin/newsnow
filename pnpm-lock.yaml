@@ -124,6 +124,9 @@ importers:
       defu:
         specifier: ^6.1.5
         version: 6.1.7
+      entities:
+        specifier: ^7.0.1
+        version: 7.0.1
       fast-xml-parser:
         specifier: ^5.7.0
         version: 5.11.1

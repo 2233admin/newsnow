@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { T0, feedWorld, ingest, row } from "./helpers"
+import { T0, descriptors, feedWorld, ingest, row } from "./helpers"
 import { normalizeFeedParams } from "#/feed/params"
 import { REPLAY_MAX, openFeedStream } from "#/feed/stream"
 import type { StreamEvent } from "#/feed/stream"
@@ -115,12 +115,12 @@ describe("实时推送（SSE 的核心）", () => {
     expect(c.items().map(i => i.url)).toEqual([null, "https://ok.example/x"])
   })
 
-  it("标的筛选未实装：ready 里标明，且什么都不推", async () => {
-    const w = await feedWorld()
-    const c = await connect(w, { symbol: "600519" })
-    expect(c.events[0]).toEqual({ type: "ready", latestSeq: 0, unimplemented: ["symbol"] })
-    await ingest(w, "jin10", batch("a", 2), T0)
-    await new Promise(r => setTimeout(r, 20))
-    expect(c.ids()).toEqual([])
+  it("标的筛选：只推带这个标的的条目", async () => {
+    const w = await feedWorld(descriptors(), { enrich: true })
+    const c = await connect(w, { symbol: "600519.XSHG" })
+    expect(c.events[0]).toEqual({ type: "ready", latestSeq: 0 })
+    await ingest(w, "jin10", [row("a", { title: "贵州茅台公告回购股份，涨停" }), row("b", { title: "黄金突破2500美元" }), row("c", { title: "英伟达财报超预期" })], T0)
+    await vi.waitFor(() => expect(c.ids()).toHaveLength(1))
+    expect(c.items().map(i => [i.itemId, i.symbols])).toEqual([["a", ["600519.XSHG"]]])
   })
 })
