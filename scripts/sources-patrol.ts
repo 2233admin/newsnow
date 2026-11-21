@@ -10,6 +10,7 @@
  *        --min-failures <n>、--min-minutes <n>、--stalled-minutes <n>
  *
  * 退出码：0 = 健康；1 = 有要报的源或采集器停摆；2 = 读不了库或参数错。
+ * 采集器停摆（标题 `[信源巡检] 采集器停摆 …`）与坏掉的源走同一套开 issue / 去重 / 重开逻辑。
  *
  * 怎么定时：不在这里配。部署在本机，所以用本机的计划任务每天跑一次 `pnpm sources:patrol --open-issues`
  * （Linux/macOS 的 cron、Windows 的任务计划程序都行）。没有选「采集器 tick 触发」：那要把 GitHub 凭据交给 Nitro 进程、

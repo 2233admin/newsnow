@@ -199,15 +199,75 @@ interface IssueRef {
 /** 带这个标签的已关闭 issue 永不重开（人明确说「不再提醒」）。仓库里没有这个标签就没有票能带它，等于不启用。 */
 export const MUTED_LABEL = "news:muted"
 
+/** 一张要维护的 issue：一个源，或「采集器停摆」。 */
+interface IssueTarget {
+  /** IssueAction.sourceId 里写的名字 */
+  key: string
+  /** 同类 issue 的标题前缀（带空格），去重与重开靠它 */
+  prefix: string
+  title: string
+  body: string
+  comment: string
+  /**
+   * 「修好过」的证据时间：该 issue 关闭之后这个时间还在更新，才说明关掉之后好过又坏了。
+   * 源取最近成功时间；采集器停摆取最近一次尝试时间；没有证据为 null（永不重开）。
+   */
+  recoveredAt: number | null
+}
+
+const COLLECTOR_STALLED_PREFIX = `${ISSUE_TITLE_PREFIX} 采集器停摆 `
+
+const isoOrNever = (ms: number | null) => ms === null ? "从未成功" : new Date(ms).toISOString()
+
+function sourceTarget(f: FailingSource, report: Pick<PatrolReport, "generatedAtIso" | "thresholds">): IssueTarget {
+  return {
+    key: f.sourceId,
+    prefix: issueTitlePrefix(f.sourceId),
+    title: issueTitle(f),
+    body: issueBody(f, report),
+    comment: reopenComment(f, report),
+    recoveredAt: f.lastSuccessAt,
+  }
+}
+
+function stalledBody(report: PatrolReport, heading: string) {
+  const { lastAttemptAt, minutesSinceLastAttempt } = report.collector
+  return [
+    heading,
+    "",
+    `- 最近一次采集尝试：${lastAttemptAt === null ? "从未" : new Date(lastAttemptAt).toISOString()}${minutesSinceLastAttempt === null ? "" : `（${minutesSinceLastAttempt} 分钟前）`}`,
+    `- 判定阈值（待定）：所有源的最近一次尝试都在 >= ${report.thresholds.collectorStalledMinutes} 分钟前`,
+    "",
+    "采集器停摆时 `source_health` 不再变化，各源的连续失败数也不再增长，所以逐源的巡检报不出来，要靠这一条。",
+    "先看本机的服务进程是否还活着、`COLLECT_ENABLED` 是否被关、日志里 `collect:tick` 是否还在输出。",
+  ].join("\n")
+}
+
+function stalledTarget(report: PatrolReport): IssueTarget {
+  return {
+    key: "collector",
+    prefix: COLLECTOR_STALLED_PREFIX,
+    title: `${COLLECTOR_STALLED_PREFIX}所有源都没有新的采集尝试`,
+    body: [
+      stalledBody(report, `每日巡检（\`pnpm sources:patrol\`，${report.generatedAtIso}）发现采集器停摆。`),
+      "",
+      "修好后本巡检不会自动关这张 issue，请手动关。",
+      "",
+      "_由 `scripts/sources-patrol.ts` 自动创建；有未关闭的同类 issue 时不会重复创建。_",
+    ].join("\n"),
+    comment: stalledBody(report, `每日巡检（${report.generatedAtIso}）发现采集器再次停摆，重新打开。`),
+    recoveredAt: report.collector.lastAttemptAt,
+  }
+}
+
 /** 重开时追加的评论：本次失败次数、最近错误、时间。 */
 export function reopenComment(f: FailingSource, report: Pick<PatrolReport, "generatedAtIso" | "thresholds">) {
-  const time = (ms: number | null) => ms === null ? "从未成功" : new Date(ms).toISOString()
   return [
     `每日巡检（${report.generatedAtIso}）发现 \`${f.sourceId}\` 再次连续失败，重新打开。`,
     "",
     `- 本次连续失败：${f.consecutiveFailures} 次（采集间隔 ${f.intervalMinutes} 分钟）`,
-    `- 最近一次成功：${time(f.lastSuccessAt)}${f.minutesSinceLastSuccess === null ? "" : `（${f.minutesSinceLastSuccess} 分钟前）`}`,
-    `- 最近一次失败：${time(f.lastErrorAt)}`,
+    `- 最近一次成功：${isoOrNever(f.lastSuccessAt)}${f.minutesSinceLastSuccess === null ? "" : `（${f.minutesSinceLastSuccess} 分钟前）`}`,
+    `- 最近一次失败：${isoOrNever(f.lastErrorAt)}`,
     `- 最近的错误：\`${(f.lastError ?? "无").replace(/`/g, "'").slice(0, 300)}\``,
     "",
     `判定阈值（待定）：连续失败 >= ${report.thresholds.minFailures} 次，且距最近成功 >= ${report.thresholds.minFailingMinutes} 分钟。`,
@@ -215,16 +275,19 @@ export function reopenComment(f: FailingSource, report: Pick<PatrolReport, "gene
 }
 
 /**
- * 给 failing 里的每个源处理一张 issue：
- * - 已有未关闭的同源 issue：不动；
- * - 没有未关闭的、但有已关闭的同源 issue：重新打开最近关闭的那张并追加一条评论，不新开；
+ * 给要报的每一项（坏掉的源、采集器停摆）处理一张 issue：
+ * - 已有未关闭的同类 issue：不动；
+ * - 没有未关闭的、但有已关闭的：关了之后「修好过」（见 IssueTarget.recoveredAt）才重开最近关闭的那张并追加评论；
+ *   带 news:muted 标签的永不重开；没修好过的标 closed-still-failing，不重开也不新开；
  * - 都没有：新建。
- * 同源 = 标题以 `[信源巡检] <源 id> ` 开头。只走 `gh api` 的 REST 路径（不用 `gh issue ...`，它走 GraphQL，在受限环境里被拒）。
+ * 同类 = 标题以 `[信源巡检] <源 id> ` 或 `[信源巡检] 采集器停摆 ` 开头。只走 `gh api` 的 REST 路径（不用 `gh issue ...`，它走 GraphQL，在受限环境里被拒）。
  * 标签不存在就不加（GitHub 对不存在的标签会自动创建，那会悄悄建出一个没人规划的标签），在返回里标 labeled: false。
  */
 export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions): Promise<{ actions: IssueAction[], labelMissing: boolean, mutedLabelMissing: boolean }> {
   const { repo, label, dryRun, runGh } = opts
-  if (!report.failing.length) return { actions: [], labelMissing: false, mutedLabelMissing: false }
+  const targets: IssueTarget[] = [...report.failing.map(f => sourceTarget(f, report))]
+  if (report.collector.stalled) targets.push(stalledTarget(report))
+  if (!targets.length) return { actions: [], labelMissing: false, mutedLabelMissing: false }
 
   // 开着的与关了的都要看（REST 的 /issues 也会返回 PR，用 pull_request 字段滤掉）
   const raw = await runGh(["api", "--paginate", `repos/${repo}/issues?state=all&per_page=100`, "--jq", ".[] | select(.pull_request | not) | {number, title, html_url, state, closed_at, labels: [.labels[].name]}"])
@@ -236,7 +299,6 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
   } catch {
     labelMissing = true
   }
-
   let mutedLabelMissing = false
   try {
     await runGh(["api", `repos/${repo}/labels/${encodeURIComponent(MUTED_LABEL)}`, "--silent"])
@@ -245,46 +307,45 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
   }
 
   const actions: IssueAction[] = []
-  for (const f of report.failing) {
-    const title = issueTitle(f)
-    const same = all.filter(i => i.title.startsWith(issueTitlePrefix(f.sourceId)))
+  for (const t of targets) {
+    const same = all.filter(i => i.title.startsWith(t.prefix))
     const existing = same.find(i => i.state === "open")
     if (existing) {
-      actions.push({ sourceId: f.sourceId, title: existing.title, action: "exists", number: existing.number, url: existing.html_url, labeled: false })
+      actions.push({ sourceId: t.key, title: existing.title, action: "exists", number: existing.number, url: existing.html_url, labeled: false })
       continue
     }
     // 最近关闭的：closed_at 最晚的；时间相同取编号大的
     const closed = same.filter(i => i.state === "closed")
       .sort((a, b) => Date.parse(b.closed_at ?? "") - Date.parse(a.closed_at ?? "") || b.number - a.number)[0]
     if (closed) {
-      // 人故意关掉的不重开：带静音标签的永不重开；其余的只在「关了之后这个源又成功过、现在又坏」时重开，
+      // 人故意关掉的不重开：带静音标签的永不重开；其余的只在「关了之后好过、现在又坏」时重开，
       // 否则是没修好就关的（wontfix、暂时下线、等上游），重开只会每天吵一次
       if (closed.labels?.includes(MUTED_LABEL)) {
-        actions.push({ sourceId: f.sourceId, title: closed.title, action: "muted", number: closed.number, url: closed.html_url, labeled: false })
+        actions.push({ sourceId: t.key, title: closed.title, action: "muted", number: closed.number, url: closed.html_url, labeled: false })
         continue
       }
       const closedAt = Date.parse(closed.closed_at ?? "")
-      if (f.lastSuccessAt === null || !(f.lastSuccessAt > closedAt)) {
-        actions.push({ sourceId: f.sourceId, title: closed.title, action: "closed-still-failing", number: closed.number, url: closed.html_url, labeled: false })
+      if (t.recoveredAt === null || !(t.recoveredAt > closedAt)) {
+        actions.push({ sourceId: t.key, title: closed.title, action: "closed-still-failing", number: closed.number, url: closed.html_url, labeled: false })
         continue
       }
       if (dryRun) {
-        actions.push({ sourceId: f.sourceId, title: closed.title, action: "would-reopen", number: closed.number, url: closed.html_url, labeled: false })
+        actions.push({ sourceId: t.key, title: closed.title, action: "would-reopen", number: closed.number, url: closed.html_url, labeled: false })
         continue
       }
       await runGh(["api", "-X", "PATCH", `repos/${repo}/issues/${closed.number}`, "-f", "state=open"])
-      await runGh(["api", `repos/${repo}/issues/${closed.number}/comments`, "-f", `body=${reopenComment(f, report)}`])
-      actions.push({ sourceId: f.sourceId, title: closed.title, action: "reopened", number: closed.number, url: closed.html_url, labeled: false })
+      await runGh(["api", `repos/${repo}/issues/${closed.number}/comments`, "-f", `body=${t.comment}`])
+      actions.push({ sourceId: t.key, title: closed.title, action: "reopened", number: closed.number, url: closed.html_url, labeled: false })
       continue
     }
     if (dryRun) {
-      actions.push({ sourceId: f.sourceId, title, action: "would-create", labeled: !labelMissing })
+      actions.push({ sourceId: t.key, title: t.title, action: "would-create", labeled: !labelMissing })
       continue
     }
-    const args = ["api", `repos/${repo}/issues`, "-f", `title=${title}`, "-f", `body=${issueBody(f, report)}`]
+    const args = ["api", `repos/${repo}/issues`, "-f", `title=${t.title}`, "-f", `body=${t.body}`]
     if (!labelMissing) args.push("-f", `labels[]=${label}`)
     const created: IssueRef = JSON.parse(await runGh(args))
-    actions.push({ sourceId: f.sourceId, title, action: "created", number: created.number, url: created.html_url, labeled: !labelMissing })
+    actions.push({ sourceId: t.key, title: t.title, action: "created", number: created.number, url: created.html_url, labeled: !labelMissing })
   }
   return { actions, labelMissing, mutedLabelMissing }
 }

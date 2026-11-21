@@ -238,6 +238,67 @@ describe("openIssues（假的 gh）", () => {
     expect(gh.creates()).toEqual([])
   })
 
+  describe("采集器停摆也走同一套 issue 流程", () => {
+    const STALLED_PREFIX = `${ISSUE_TITLE_PREFIX} 采集器停摆 `
+    /** 停摆：最近一次尝试在 3 小时前；源本身没有失败（source_health 冻结了） */
+    async function stalledReport() {
+      const health = await healthFrom(async (store) => {
+        await store.recordSuccess("good", NOW - 180 * MIN, 10)
+      })
+      const report = buildPatrolReport(health, { good: sources.good }, NOW)
+      expect(report.failing).toEqual([])
+      expect(report.collector.stalled).toBe(true)
+      return report
+    }
+
+    it("停摆且没有失败的源：创建一张固定前缀的 issue，正文写最近一次尝试时间与阈值", async () => {
+      const gh = fakeGh()
+      const { actions } = await openIssues(await stalledReport(), { ...base, dryRun: false, runGh: gh.runGh })
+      expect(actions.map(a => [a.action, a.sourceId])).toEqual([["created", "collector"]])
+      const [create] = gh.creates()
+      const title = create.find(a => a.startsWith("title="))!.slice("title=".length)
+      expect(title.startsWith(STALLED_PREFIX)).toBe(true)
+      const body = create.find(a => a.startsWith("body="))!
+      expect(body).toContain(new Date(NOW - 180 * MIN).toISOString())
+      expect(body).toContain("180 分钟前")
+      expect(body).toContain(`>= ${PATROL_DEFAULTS.collectorStalledMinutes} 分钟`)
+    })
+
+    it("--dry-run：只说会创建，不创建", async () => {
+      const gh = fakeGh()
+      const { actions } = await openIssues(await stalledReport(), { ...base, dryRun: true, runGh: gh.runGh })
+      expect(actions.map(a => a.action)).toEqual(["would-create"])
+      expect(gh.creates()).toEqual([])
+    })
+
+    it("已有未关闭的停摆 issue：不重复创建", async () => {
+      const gh = fakeGh({ open: [{ number: 21, title: `${STALLED_PREFIX}所有源都没有新的采集尝试` }] })
+      const { actions } = await openIssues(await stalledReport(), { ...base, dryRun: false, runGh: gh.runGh })
+      expect(actions.map(a => [a.action, a.number])).toEqual([["exists", 21]])
+      expect(gh.creates()).toEqual([])
+    })
+
+    it("已关闭的停摆 issue：关了之后采集器又跑过（最近尝试晚于 closed_at）才重开；还停着就不重开", async () => {
+      const ranAfterClose = fakeGh({ open: [{ number: 21, title: `${STALLED_PREFIX}x`, state: "closed", closed_at: new Date(NOW - 5 * 24 * 60 * MIN).toISOString() }] })
+      const r1 = await openIssues(await stalledReport(), { ...base, dryRun: false, runGh: ranAfterClose.runGh })
+      expect(r1.actions.map(a => [a.action, a.number])).toEqual([["reopened", 21]])
+      expect(ranAfterClose.comments()).toHaveLength(1)
+
+      const stillStalled = fakeGh({ open: [{ number: 21, title: `${STALLED_PREFIX}x`, state: "closed", closed_at: new Date(NOW - 60 * MIN).toISOString() }] })
+      const r2 = await openIssues(await stalledReport(), { ...base, dryRun: false, runGh: stillStalled.runGh })
+      expect(r2.actions.map(a => a.action)).toEqual(["closed-still-failing"])
+      expect(stillStalled.reopens()).toEqual([])
+    })
+
+    it("停摆的同时有失败的源：两张 issue 都处理", async () => {
+      const report = await failingReport()
+      const stalled = { ...report, collector: { ...report.collector, stalled: true, minutesSinceLastAttempt: 90 }, unhealthy: true }
+      const gh = fakeGh()
+      const { actions } = await openIssues(stalled, { ...base, dryRun: false, runGh: gh.runGh })
+      expect(actions.map(a => [a.sourceId, a.action]).sort()).toEqual([["collector", "created"], ["down", "created"]])
+    })
+  })
+
   it("没有要报的源：一次 gh 都不调", async () => {
     const gh = fakeGh()
     const healthy = buildPatrolReport([], {}, NOW)
