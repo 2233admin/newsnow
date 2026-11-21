@@ -1,6 +1,8 @@
 /**
  * 每日巡检：读观测库的 source_health，列出连续失败的源（阈值与依据见 server/collector/patrol.ts），
  * 默认把机器可读的 JSON 报告打到 stdout，只读、不开 issue。
+ * 覆盖内置源（shared/sources.json）与已启用的用户源（库里 user_sources 表里 enabled 的，id 是 `user:<slug>`，
+ * 预置订阅包启用的源也在其中）；停用的用户源不巡检。读不到 user_sources 表时只巡检内置源。
  *
  *   pnpm sources:patrol                          # JSON 报告
  *   pnpm sources:patrol --format text            # 给人看的表
@@ -29,6 +31,7 @@ import sqlite from "db0/connectors/better-sqlite3"
 import { projectDir } from "../shared/dir"
 import _sources from "../shared/sources.json"
 import { ObservationStore } from "../server/collector/store"
+import { readEnabledUserSources } from "../server/registry/patrol-sources"
 import { MUTED_LABEL, PATROL_DEFAULTS, buildPatrolReport, openIssues } from "../server/collector/patrol"
 import type { PatrolSourceMeta } from "../server/collector/patrol"
 
@@ -64,7 +67,7 @@ if (!hasTable) {
 
 // 只读：不调用 store.init()，不建表、不改库
 const health = await new ObservationStore(db).getHealth()
-const report = buildPatrolReport(health, sources, Date.now(), {
+const report = buildPatrolReport(health, { ...sources, ...await readEnabledUserSources(db) }, Date.now(), {
   minFailures: positive("min-failures", PATROL_DEFAULTS.minFailures),
   minFailingMinutes: positive("min-minutes", PATROL_DEFAULTS.minFailingMinutes),
   collectorStalledMinutes: positive("stalled-minutes", PATROL_DEFAULTS.collectorStalledMinutes),

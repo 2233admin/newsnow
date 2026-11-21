@@ -48,11 +48,15 @@ function absolute(href: string, base: string) {
   }
 }
 
-function finish(partial: { title: string, url: string, id: string, date: string }, base: string): NewsItem | undefined {
+/** 结尾的版本号：`…/abs/2611.26191v1` 的 `v1`。只在显式写了 id 字段时裁剪（回退到链接 / 标题的 id 不动）。 */
+const VERSION_SUFFIX = /v\d+$/
+
+function finish(partial: { title: string, url: string, id: string, date: string }, base: string, stripVersion = false): NewsItem | undefined {
   const url = absolute(partial.url, base)
   if (!partial.title) return undefined
+  const id = stripVersion ? partial.id.replace(VERSION_SUFFIX, "") : partial.id
   return {
-    id: partial.id || url || partial.title,
+    id: id || url || partial.title,
     title: partial.title,
     url,
     pubDate: normalizeDate(partial.date),
@@ -70,7 +74,7 @@ export function mapJson(body: unknown, spec: JsonSpec): NewsItem[] {
       url: evalField(raw, spec.fields.url),
       id: evalField(raw, spec.fields.id),
       date: evalField(raw, spec.fields.pubDate),
-    }, spec.url)
+    }, spec.url, spec.idStripVersion)
     if (item) items.push(item)
   }
   return items
@@ -100,7 +104,7 @@ export function mapRule(html: string, spec: RuleSpec): NewsItem[] {
       url: evalRule($, el, spec.fields.url),
       id: evalRule($, el, spec.fields.id),
       date: evalRule($, el, spec.fields.pubDate),
-    }, spec.url)
+    }, spec.url, spec.idStripVersion)
     if (item) items.push(item)
   })
   return items

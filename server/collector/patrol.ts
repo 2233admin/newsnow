@@ -1,8 +1,10 @@
+import { isUserSourceId } from "../registry/spec"
 import type { HealthRecord } from "./store"
 
 /**
  * 每日巡检（#2187）：读观测库的 source_health，找出连续失败的源，可选地到 XartLab/KATANAview 开 issue。
  * 纯逻辑放这里（可测），命令行入口在 scripts/sources-patrol.ts。
+ * 覆盖内置源与已启用的用户源（`user:*`，含预置订阅包启用的）：谁在被巡检由调用方传入的 sources 决定。
  */
 
 /**
@@ -176,7 +178,9 @@ export function issueBody(f: FailingSource, report: Pick<PatrolReport, "generate
     "",
     `判定阈值（待定）：连续失败 >= ${report.thresholds.minFailures} 次，且距最近成功 >= ${report.thresholds.minFailingMinutes} 分钟。`,
     "",
-    "怎么查：在 newsnow fork 里 `pnpm collector:check` 看这个源的观测；对着错误信息看是站点改了结构、被拒绝还是网络问题，再改 `server/sources/` 里的适配器。",
+    isUserSourceId(f.sourceId)
+      ? "怎么查：这是用户订阅源（含预置订阅包启用的），没有适配器代码可改。`pnpm collector:check` 看这个源的观测，对着错误信息看是地址变了、站点拒绝（反爬、限流）还是网络问题；确认失效就在设置里改地址或停用（停用后巡检不再报它）。"
+      : "怎么查：在 newsnow fork 里 `pnpm collector:check` 看这个源的观测；对着错误信息看是站点改了结构、被拒绝还是网络问题，再改 `server/sources/` 里的适配器。",
     "修好后本巡检不会自动关这张 issue，请手动关。",
     "",
     "_由 `scripts/sources-patrol.ts` 自动创建；同一个源有未关闭的同名 issue 时不会重复创建。_",
