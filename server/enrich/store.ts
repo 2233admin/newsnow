@@ -55,6 +55,10 @@ export interface GroupInfo {
   size: number
   /** 主条目之外的成员，按 seq 升序，最多 MAX_MEMBERS_LISTED 个 */
   members: GroupMember[]
+  /** 主条目本身（按来源收拢后，代表行可能是成员，要把主条目列进它的 members） */
+  main: GroupMember
+  /** 每个来源在组里最早的 seq（含主条目）：判断某个来源范围里组的第一条是谁，不受 members 上限影响 */
+  firstSeqBySource: Record<string, number>
 }
 
 function rowsOf<T>(res: unknown): T[] {
@@ -177,11 +181,17 @@ export class EnrichStore {
     if (!ids.length) return out
     const json = JSON.stringify(ids)
     const sources = new Map<number, Set<string>>()
-    for (const r of rowsOf<{ seq: number, source_id: string }>(await this.db.prepare(`
-      SELECT seq, source_id FROM items WHERE seq IN (SELECT value FROM json_each(?))
+    for (const r of rowsOf<Record<string, any>>(await this.db.prepare(`
+      SELECT seq, source_id, item_id, url, orig_url, pub_date, first_seen_at, feed_ts FROM items WHERE seq IN (SELECT value FROM json_each(?))
     `).all(json))) {
       sources.set(r.seq, new Set([r.source_id]))
-      out.set(r.seq, { sourcesCount: 1, size: 1, members: [] })
+      out.set(r.seq, {
+        sourcesCount: 1,
+        size: 1,
+        members: [],
+        main: { seq: r.seq, sourceId: r.source_id, itemId: r.item_id, url: r.url, origUrl: r.orig_url, pubDate: r.pub_date, firstSeenAt: r.first_seen_at, feedTs: r.feed_ts },
+        firstSeqBySource: { [r.source_id]: r.seq },
+      })
     }
     const rows = rowsOf<Record<string, any>>(await this.db.prepare(`
       SELECT seq, dup_of, source_id, item_id, url, orig_url, pub_date, first_seen_at, feed_ts FROM items
@@ -192,6 +202,7 @@ export class EnrichStore {
       if (!info) continue
       sources.get(r.dup_of)!.add(r.source_id)
       info.size++
+      info.firstSeqBySource[r.source_id] ??= r.seq
       if (info.members.length < MAX_MEMBERS_LISTED) {
         info.members.push({ seq: r.seq, sourceId: r.source_id, itemId: r.item_id, url: r.url, origUrl: r.orig_url, pubDate: r.pub_date, firstSeenAt: r.first_seen_at, feedTs: r.feed_ts })
       }

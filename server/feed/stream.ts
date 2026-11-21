@@ -1,6 +1,6 @@
 import process from "node:process"
 import type { FeedParams } from "./params"
-import { streamMatcher, toView } from "./service"
+import { resolveScope, streamMatcher, toView } from "./service"
 import type { FeedItemView } from "./service"
 import type { FeedStore } from "./store"
 import type { SourceDescriptor } from "#/registry/registry"
@@ -13,7 +13,8 @@ import type { IngestedItem, ObservationStore } from "#/collector/store"
  * - ready：连上后第一条，{ latestSeq }。
  * - item：一条新条目（FeedItemView），SSE 的 id 就是它的 seq。默认（与 GET /api/feed 一致）同一事件的转载不单独推：
  *   后到的成员推 merge；带 expand=1 时成员也推 item。
- * - merge：某个已有的组来了新成员，{ seq（成员的）, groupId（主条目的 seq）, sourceId, sourcesCount（现在的来源数） }；SSE 的 id 是成员的 seq。
+ * - merge：订阅范围（来源 / 分类 / 停用）里已经有这个组的更早的条目（客户端收到过那一行）时，后到的成员推它；
+ *   范围里这个组的第一条总是推 item（哪怕它在全局是成员：主条目在范围外，客户端没有那一行）。某个已有的组来了新成员，{ seq（成员的）, groupId（主条目的 seq）, sourceId, sourcesCount（现在的来源数） }；SSE 的 id 是成员的 seq。
  *   前端把 groupId 那一行的来源数改成 sourcesCount 即可，主条目的位置与内容不变。
  * - reset：客户端落后太多（或 Last-Event-ID 比库里最大的 seq 还大，库被换过），不补发了：
  *   请重新 GET /api/feed 取首屏，再用响应里的 latestSeq 当 Last-Event-ID 重连。{ latestSeq }。
@@ -66,6 +67,8 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
       if (closed) return
       const descs = await deps.describe()
       const match = streamMatcher(params, descs)
+      const scope = resolveScope(params, descs)
+      const allowed = scope ? new Set(scope) : undefined
       const byId = new Map(descs.map(d => [d.id, d]))
       const fresh = [...items].sort((a, b) => a.seq - b.seq).filter(item => item.seq > lastSent)
       // 一批一次读出这些条目所在组的来源数与成员
@@ -75,10 +78,14 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
         lastSent = item.seq
         if (!match(item)) continue
         const group = groups.get(item.dupOf ?? item.seq)
-        if (item.dupOf !== null && !params.expand) {
+        // 默认模式的代表行规则与 GET /api/feed 一致：订阅范围里组的第一条（seq 最小）是代表，推 item；
+        // 范围里已经有更早的条目（客户端见过它）才推 merge。范围外的主条目不算，所以按来源订阅不会收到指向没见过的行的 merge。
+        const seen = item.dupOf !== null && !params.expand && group
+          && Object.entries(group.firstSeqBySource).some(([s, q]: [string, number]) => q < item.seq && (!allowed || allowed.has(s)))
+        if (seen) {
           emit({ type: "merge", seq: item.seq, groupId: item.dupOf, sourceId: item.sourceId, sourcesCount: group?.sourcesCount ?? 1 })
         } else {
-          emit({ type: "item", item: toView(item, byId, group) })
+          emit({ type: "item", item: toView(item, byId, group, params.expand) })
         }
       }
     }).catch((e) => {

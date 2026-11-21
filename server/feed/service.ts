@@ -134,7 +134,7 @@ function memberView(m: GroupMember, byId: Map<string, SourceDescriptor>): FeedMe
   }
 }
 
-export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>, group?: GroupInfo): FeedItemView {
+export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>, group?: GroupInfo, expand = false): FeedItemView {
   const d = byId.get(item.sourceId)
   return {
     seq: item.seq,
@@ -150,7 +150,8 @@ export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>, 
     groupId: item.dupOf ?? item.seq,
     dupOf: item.dupOf,
     sourcesCount: group?.sourcesCount ?? 1,
-    members: item.dupOf === null && group ? group.members.map(m => memberView(m, byId)) : [],
+    // 代表行是主条目：列出其余成员；代表行是成员（按来源范围收拢时）：列出组里的其余条目，主条目在最前
+    members: group && !(expand && item.dupOf !== null) ? (item.dupOf === null ? group.members : [group.main, ...group.members].filter(m => m.seq !== item.seq)).map(m => memberView(m, byId)) : [],
     pubDate: item.pubDate,
     firstSeenAt: item.firstSeenAt,
     feedTs: item.feedTs,
@@ -193,7 +194,7 @@ export function createFeedService(deps: FeedServiceDeps) {
       const byId = new Map(descs.map(d => [d.id, d]))
       const last = rows.at(-1)
       return {
-        items: rows.map(r => toView(r, byId, groups.get(r.dupOf ?? r.seq))),
+        items: rows.map(r => toView(r, byId, groups.get(r.dupOf ?? r.seq), params.expand)),
         nextCursor: hasMore && last ? encodeCursor({ feedTs: last.feedTs, sourceId: last.sourceId, itemId: last.itemId }) : null,
         latestSeq,
         now,

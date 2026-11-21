@@ -91,7 +91,18 @@ function rowWhere(filter: FeedFilter) {
     where.push(`(title LIKE ? ESCAPE '\\' OR clean_title LIKE ? ESCAPE '\\')`)
     params.push(`%${escapeLike(term)}%`, `%${escapeLike(term)}%`)
   }
-  if (!filter.expand) where.push(`dup_of IS NULL`)
+  if (!filter.expand) {
+    if (filter.sourceIds) {
+      // 先按来源范围筛、再在范围里收拢：组的代表行 = 范围内 seq 最小的那条。主条目在范围里它就是代表；
+      // 不在，范围里最早的成员是代表（后到的成员 seq 只会更大，代表定下后不再变，游标稳定）。
+      where.push(`(items.dup_of IS NULL OR NOT EXISTS (
+        SELECT 1 FROM items m WHERE (m.seq = items.dup_of OR m.dup_of = items.dup_of) AND m.seq < items.seq
+          AND m.source_id IN (SELECT value FROM json_each(?))))`)
+      params.push(JSON.stringify(filter.sourceIds))
+    } else {
+      where.push(`items.dup_of IS NULL`)
+    }
+  }
   if (filter.symbols.length) {
     const symbols = JSON.stringify(filter.symbols)
     const own = `SELECT seq FROM item_symbols WHERE symbol IN (SELECT value FROM json_each(?))`
@@ -143,7 +154,7 @@ export class FeedStore {
       rows = await run(`
         SELECT ${ITEM_SELECT} FROM (
           SELECT ${ITEM_SELECT} FROM items ${clause(range.where)} ${ORDER} LIMIT ${this.scanWindow}
-        ) ${clause(row.where)} ${ORDER} LIMIT ?
+        ) AS items ${clause(row.where)} ${ORDER} LIMIT ?
       `, [...range.params, ...row.params, limit + 1])
       done = rows.length > limit
     }
