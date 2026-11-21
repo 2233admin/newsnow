@@ -1,3 +1,4 @@
+import process from "node:process"
 import type { FeedParams } from "./params"
 import { streamMatcher, toView } from "./service"
 import type { FeedItemView } from "./service"
@@ -106,4 +107,15 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
       unsubscribe()
     },
   }
+}
+
+/**
+ * 同时在线的 SSE 连接数上限（FEED_MAX_STREAMS 覆盖）。待定：没有实测依据，只是不让连接无限涨——每个连接都挂一个入库监听器
+ * 并在每批新条目上读一次注册表；本机使用者（几个面板 + 几个 agent）远用不到 32。要按实测调（跟进项，见 #2186 评论）。
+ */
+export const DEFAULT_MAX_STREAMS = 32
+
+export function maxStreams(env: Record<string, string | undefined> = process.env) {
+  const n = Number(env.FEED_MAX_STREAMS)
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_STREAMS
 }

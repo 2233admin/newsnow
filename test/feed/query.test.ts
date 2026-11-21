@@ -22,6 +22,30 @@ describe("排序键（feed_ts）", () => {
   })
 })
 
+describe("链接只给 http / https", () => {
+  it("非 http(s) 的链接置空（javascript:、data:、相对路径、乱写），合法的原样保留", async () => {
+    const w = await feedWorld()
+    const urls = ["javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,<script>1</script>", "vbscript:x", "file:///etc/passwd", "//evil.example/x", "/relative", "not a url", "  https://ok.example/a?b=1  ", "http://ok.example/", "https://ok.example/中文"]
+    await ingest(w, "jin10", urls.map((u, i) => row(`u${i}`, { url: u })), T0)
+    await ingest(w, "jin10", [row("nourl", { url: null })], T0 + 1)
+    const got = Object.fromEntries((await w.service.query({ limit: 50 })).items.map(i => [i.itemId, i.url]))
+    expect(got).toEqual({
+      u0: null,
+      u1: null,
+      u2: null,
+      u3: null,
+      u4: null,
+      u5: null,
+      u6: null,
+      u7: null,
+      u8: "https://ok.example/a?b=1",
+      u9: "http://ok.example/",
+      u10: "https://ok.example/中文",
+      nourl: null,
+    })
+  })
+})
+
 describe("gET /api/feed 的查询", () => {
   async function seeded() {
     const w = await feedWorld()

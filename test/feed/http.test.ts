@@ -138,6 +138,28 @@ describe("信息流的 HTTP 接口", () => {
     await b.done
   })
 
+  it("sSE 连接数有上限：满了回 429，断开一个就又能连", async () => {
+    process.env.FEED_MAX_STREAMS = "2"
+    try {
+      const a = await sse("/api/feed/stream")
+      const b = await sse("/api/feed/stream")
+      await vi.waitFor(() => expect(b.frames.map(f => f.event)).toContain("ready"))
+      expect((await fetch(url("/api/feed/stream"))).status).toBe(429)
+      a.close()
+      await a.done
+      await vi.waitFor(async () => {
+        const c = await sse("/api/feed/stream")
+        expect(c.res.status).toBe(200)
+        c.close()
+        await c.done
+      })
+      b.close()
+      await b.done
+    } finally {
+      delete process.env.FEED_MAX_STREAMS
+    }
+  })
+
   it("sSE 筛选：只推订阅的来源", async () => {
     const store = await getObservationStore()
     const c = await sse("/api/feed/stream?source=jin10")

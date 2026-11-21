@@ -107,6 +107,14 @@ describe("实时推送（SSE 的核心）", () => {
     expect(bySource.items().map(i => i.itemId)).toEqual(["g1", "g2", "g3"])
   })
 
+  it("推送的条目里链接也只给 http / https", async () => {
+    const w = await feedWorld()
+    const c = await connect(w)
+    await ingest(w, "jin10", [row("bad", { url: "javascript:alert(1)" }), row("good", { url: "https://ok.example/x" })], T0)
+    await vi.waitFor(() => expect(c.ids()).toHaveLength(2))
+    expect(c.items().map(i => i.url)).toEqual([null, "https://ok.example/x"])
+  })
+
   it("标的筛选未实装：ready 里标明，且什么都不推", async () => {
     const w = await feedWorld()
     const c = await connect(w, { symbol: "600519" })

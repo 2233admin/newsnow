@@ -80,6 +80,21 @@ export function resolveScope(params: Pick<FeedParams, "source" | "category" | "i
   return pool.map(d => d.id)
 }
 
+/**
+ * 对外只给 http / https 链接：内置源的适配器不经 sanitizeItems（用户源的才经过），
+ * 条目里的 url 可能是 javascript:、data: 之类，前端若直接当 href 渲染就是 XSS。这里在服务端再过一道（#2264 第 6 项的服务端一半），
+ * 前端渲染时仍应再挡一次。不是合法 URL 或协议不对的置 null。
+ */
+export function safeUrl(raw: string | null): string | null {
+  if (!raw) return null
+  try {
+    const u = new URL(raw.trim())
+    return u.protocol === "http:" || u.protocol === "https:" ? raw.trim() : null
+  } catch {
+    return null
+  }
+}
+
 export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>): FeedItemView {
   const d = byId.get(item.sourceId)
   return {
@@ -89,7 +104,7 @@ export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>):
     category: d?.category ?? "",
     itemId: item.itemId,
     title: item.title,
-    url: item.url,
+    url: safeUrl(item.url),
     pubDate: item.pubDate,
     firstSeenAt: item.firstSeenAt,
     feedTs: item.feedTs,
