@@ -88,3 +88,34 @@ describe("buildGetter", () => {
     await expect(getter()).rejects.toThrow("响应不是合法的 JSON")
   })
 })
+
+describe("条目链接只留 http/https（出口统一过滤，丢弃整条）", () => {
+  const evil = ["javascript:alert(1)", "JavaScript:alert(1)", " javascript:alert(1)", "data:text/html,<script>1</script>", "vbscript:x", "file:///etc/passwd", "blob:https://a.example/x"]
+
+  it("rss：link 不是 http/https 的条目被丢弃，相对链接按订阅地址补全", async () => {
+    const xml = (links: string[]) => `<rss version="2.0"><channel><title>t</title>${links.map((l, i) => `<item><title>T${i}</title><link>${l}</link></item>`).join("")}</channel></rss>`
+    const items = await buildGetter({ kind: "rss", url: "https://f.example/dir/feed.xml" }, async () => xml([...evil, "/rel/1", "https://ok.example/2"]))()
+    expect(items.map(i => i.url)).toEqual(["https://f.example/rel/1", "https://ok.example/2"])
+    expect(items.map(i => i.id)).toEqual(["https://f.example/rel/1", "https://ok.example/2"])
+  })
+
+  it("json：{路径} 模板拼出 javascript: 的丢弃；映射到 javascript: 字段的丢弃；id 不会带着坏链接进库", async () => {
+    const spec = { kind: "json", url: "https://api.example/x", itemsPath: "", fields: { title: "t", url: "javascript:alert({id})" } } as const
+    expect(await buildGetter(spec, async () => JSON.stringify([{ t: "A", id: 7 }]))()).toEqual([])
+    const direct = { ...spec, fields: { title: "t", url: "u" } }
+    const items = await buildGetter(direct, async () => JSON.stringify([...evil.map((u, i) => ({ t: `E${i}`, u })), { t: "OK", u: "https://ok.example/1" }]))()
+    expect(items.map(i => i.title)).toEqual(["OK"])
+  })
+
+  it("rule：a@href 是 javascript: / data: 的丢弃", async () => {
+    const html = `<ul>${evil.map((u, i) => `<li><a href="${u}">E${i}</a></li>`).join("")}<li><a href="/ok">OK</a></li></ul>`
+    const items = await buildGetter({ kind: "rule", url: "https://s.example/", item: "li", fields: { title: "a", url: "a@href" } }, async () => html)()
+    expect(items.map(i => i.title)).toEqual(["OK"])
+    expect(items[0].url).toBe("https://s.example/ok")
+  })
+
+  it("rsshub：条目 url 同样过滤", async () => {
+    const { sanitizeItems } = await import("#/registry/adapters")
+    expect(sanitizeItems([{ id: "1", title: "a", url: "javascript:x" }, { id: "2", title: "b", url: "https://ok.example/" }], "https://hub.example/").map(i => i.id)).toEqual(["2"])
+  })
+})

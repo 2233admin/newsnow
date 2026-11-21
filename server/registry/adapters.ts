@@ -2,7 +2,7 @@ import * as cheerio from "cheerio"
 import type { NewsItem } from "@shared/types"
 import type { JsonSpec, RuleSpec, UserSourceSpec } from "./spec"
 import type { SourceGetter } from "#/types"
-import { defineRSSHubSource, defineRSSSource } from "#/utils/source"
+import { RSSHUB_BASE, defineRSSHubSource, defineRSSSource } from "#/utils/source"
 
 /** 用户源适配器的出网函数：带 SSRF 防护的文本抓取（net.ts 的 safeFetchText 已绑定策略） */
 export type FetchText = (url: string) => Promise<string>
@@ -106,8 +106,38 @@ export function mapRule(html: string, spec: RuleSpec): NewsItem[] {
   return items
 }
 
-/** 配置 → 适配器。四种都复用现有的适配器形状（() => Promise<NewsItem[]>）。 */
+/**
+ * 用户源出口的统一过滤（四种 kind 都经过）：条目链接只留 http / https，相对链接按 base 补全；
+ * 其余 scheme（javascript:、data:、file:、vbscript:、blob: …）或没有链接的条目**整条丢弃**，而不是只清空 url：
+ * rss 与 json / rule 都会拿链接兜底当 id，只清 url 会让坏链接以 id 的形式进库。
+ * 内容由第三方站点控制，而新闻面板会把 url 渲染成可点的链接。KATANAview 渲染端另有一道（跟进票）。
+ */
+export function sanitizeItems(items: NewsItem[], base: string): NewsItem[] {
+  const out: NewsItem[] = []
+  for (const item of items) {
+    const raw = typeof item?.url === "string" ? item.url : ""
+    if (!raw.trim()) continue
+    let parsed: URL
+    try {
+      parsed = new URL(raw, base)
+    } catch {
+      continue
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue
+    const url = parsed.toString()
+    out.push({ ...item, url, id: item.id === raw ? url : item.id })
+  }
+  return out
+}
+
+/** 配置 → 适配器。四种都复用现有的适配器形状（() => Promise<NewsItem[]>），输出统一过 sanitizeItems。 */
 export function buildGetter(spec: UserSourceSpec, fetchText: FetchText): SourceGetter {
+  const raw = buildRawGetter(spec, fetchText)
+  const base = spec.kind === "rsshub" ? RSSHUB_BASE : spec.url
+  return async () => sanitizeItems(await raw(), base)
+}
+
+function buildRawGetter(spec: UserSourceSpec, fetchText: FetchText): SourceGetter {
   switch (spec.kind) {
     case "rss":
       return defineRSSSource(spec.url, { fetchText })
