@@ -2,7 +2,8 @@
  * 本机自检：对运行中的服务验收新闻流接口（#2186），只读，经 HTTP，不 import 服务端代码。
  *
  * 1. 翻页：从头按游标翻到底，断言没有重复、顺序严格递减（排序键 feedTs、sourceId、itemId）；
- *    给了 --db 时再与库里 items 的行数对账（一条不少）。
+ *    给了 --db 时再对账：expand=1 的行数 = items 总行数；默认（每组一行）的行数 = dup_of 为空的行数；
+ *    按每个来源筛，行数 = 该来源里出现过的组数（先筛再收拢）。
  * 2. 首屏延迟：连发 --runs 次 GET /api/feed，打印 p50 / p95 / 最大（毫秒），超过 --max-ms 以非零退出码结束。
  *
  * 用法（服务已在跑；Host 须是 localhost / 127.0.0.1，见 server/registry/http.ts）：
@@ -50,27 +51,28 @@ function fail(msg: string) {
   console.error(`FAIL ${msg}`)
 }
 
-// 1. 翻页
-const seen = new Set<string>()
-let prev: Item | undefined
-let cursor: string | undefined
-let pages = 0
-let total = 0
-for (;;) {
-  const page = await get(`/api/feed?includeInactive=1&limit=${pageSize}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)
-  pages++
-  for (const item of page.items) {
-    const key = `${item.sourceId}\u0000${item.itemId}`
-    if (seen.has(key)) fail(`重复：${item.sourceId}/${item.itemId}`)
-    seen.add(key)
-    if (prev && !after(prev, item)) fail(`顺序不对：${prev.sourceId}/${prev.itemId} 之后是 ${item.sourceId}/${item.itemId}`)
-    prev = item
-    total++
+// 1. 翻页：按游标翻到底，断言不重复、顺序严格递减；返回翻到的条数
+async function walk(label: string, query: string) {
+  const seen = new Set<string>()
+  let prev: Item | undefined
+  let cursor: string | undefined
+  let pages = 0
+  for (;;) {
+    const page = await get(`/api/feed?${query}&limit=${pageSize}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)
+    pages++
+    for (const item of page.items) {
+      const key = `${item.sourceId}\u0000${item.itemId}`
+      if (seen.has(key)) fail(`${label} 重复：${item.sourceId}/${item.itemId}`)
+      seen.add(key)
+      if (prev && !after(prev, item)) fail(`${label} 顺序不对：${prev.sourceId}/${prev.itemId} 之后是 ${item.sourceId}/${item.itemId}`)
+      prev = item
+    }
+    if (!page.nextCursor) break
+    cursor = page.nextCursor
   }
-  if (!page.nextCursor) break
-  cursor = page.nextCursor
+  console.log(`翻页 ${label}：${pages} 页，${seen.size} 条`)
+  return seen.size
 }
-console.log(`翻页：${pages} 页，${total} 条，不重复 ${seen.size} 条`)
 
 if (dbPath) {
   if (!existsSync(dbPath)) {
@@ -78,10 +80,26 @@ if (dbPath) {
     process.exit(2)
   }
   const db = createDatabase(sqlite({ path: dbPath }))
-  const { n } = await db.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }
-  console.log(`库里 items：${n} 行`)
+  const count = async (sql: string, ...args: string[]) => ((await db.prepare(sql).get(...args)) as { n: number }).n
   // 翻页期间服务还在采集会多出新条目：翻到的只能比开始时的多，不能少
-  if (seen.size < n) fail(`漏了 ${n - seen.size} 条（翻到 ${seen.size}，库里 ${n}）`)
+  // 展开（expand=1）：每条单独出现，翻到的就是库里全部 items
+  const total = await count("SELECT COUNT(*) AS n FROM items")
+  const expanded = await walk("expand=1", "includeInactive=1&expand=1")
+  if (expanded < total) fail(`expand=1 漏了 ${total - expanded} 条（翻到 ${expanded}，库里 ${total}）`)
+  // 默认（每组一行）：行数 = 主条目数（dup_of 为空的）
+  const mains = await count("SELECT COUNT(*) AS n FROM items WHERE dup_of IS NULL")
+  const collapsed = await walk("默认（按组）", "includeInactive=1")
+  if (collapsed < mains) fail(`默认模式漏了 ${mains - collapsed} 组（翻到 ${collapsed}，库里主条目 ${mains}）`)
+  // 按来源筛：每个来源里出现过的组各出一行（先筛再收拢），不能因为主条目在别的源里就整组消失
+  const sources = ((await db.prepare("SELECT DISTINCT source_id AS s FROM items").all()) as { s: string }[]).map(r => r.s)
+  for (const source of sources) {
+    const groups = await count("SELECT COUNT(DISTINCT COALESCE(dup_of, seq)) AS n FROM items WHERE source_id = ?", source)
+    const got = await walk(`source=${source}`, `includeInactive=1&source=${encodeURIComponent(source)}`)
+    if (got < groups) fail(`source=${source} 漏了 ${groups - got} 组（翻到 ${got}，库里该来源出现的组 ${groups}）`)
+  }
+  console.log(`库里 items ${total} 行，主条目 ${mains}，来源 ${sources.length} 个`)
+} else {
+  await walk("默认（按组）", "includeInactive=1")
 }
 
 // 2. 首屏延迟

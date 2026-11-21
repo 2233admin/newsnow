@@ -87,6 +87,8 @@ export interface IngestedItem extends ItemRecord {
 /** 写库处的富化钩子（server/enrich/enrich.ts 实现）：在通知监听器之前原地填好条目的富化字段。抛错只记日志，条目留作未富化。 */
 export interface ItemEnricher {
   enrich: (items: IngestedItem[]) => Promise<void>
+  /** 已有条目的标题变了：清洗标题、标的、去重键跟着重算（分组不动） */
+  retitle: (items: IngestedItem[]) => Promise<void>
 }
 
 export type IngestListener = (items: IngestedItem[]) => void
@@ -353,11 +355,16 @@ export class ObservationStore {
       // 已有的与新的分开写：对已有条目做 INSERT … ON CONFLICT DO UPDATE 也会耗掉一个 AUTOINCREMENT 值，
       // 而每个源每轮都会把榜上的老条目再写一遍，seq 会以「条目数 × 采集次数」的速度空涨，补发上限（feed/stream.ts）就失去意义。
       const existing = new Set<string>()
+      const retitled: string[] = []
       for (const part of chunk(rows, EXISTS_IDS_PER_STATEMENT)) {
-        const found = rowsOf<{ item_id: string }>(await this.db.prepare(`
-          SELECT item_id FROM items WHERE source_id = ? AND item_id IN (${Array.from({ length: part.length }, () => "?").join(",")})
+        const found = rowsOf<{ item_id: string, title: string }>(await this.db.prepare(`
+          SELECT item_id, title FROM items WHERE source_id = ? AND item_id IN (${Array.from({ length: part.length }, () => "?").join(",")})
         `).all(sourceId, ...part.map(r => r.itemId)))
-        for (const f of found) existing.add(f.item_id)
+        const next = new Map(part.map(r => [r.itemId, r.title]))
+        for (const f of found) {
+          existing.add(f.item_id)
+          if (next.get(f.item_id) !== f.title) retitled.push(f.item_id)
+        }
       }
       for (const part of chunk(rows.filter(r => !existing.has(r.itemId)), ITEM_ROWS_PER_STATEMENT)) {
         const params = part.flatMap(r => [sourceId, r.itemId, r.title, r.url, r.pubDate, observedAt, observedAt, feedTimestamp(r.pubDate, observedAt)])
@@ -385,6 +392,19 @@ export class ObservationStore {
       const items = rowsOf<Record<string, any>>(await this.db.prepare(`
         SELECT ${ITEM_SELECT} FROM items WHERE first_seen_at = ? AND source_id = ? ORDER BY seq
       `).all(observedAt, sourceId)).map(itemFromRow)
+      if (retitled.length && this.enricher) {
+        // 标题变了的老条目：清洗标题、标的、去重键跟着更新（主条目身份与分组不变）
+        try {
+          for (const part of chunk(retitled, EXISTS_IDS_PER_STATEMENT)) {
+            const changed = rowsOf<Record<string, any>>(await this.db.prepare(`
+              SELECT ${ITEM_SELECT} FROM items WHERE source_id = ? AND item_id IN (${Array.from({ length: part.length }, () => "?").join(",")})
+            `).all(sourceId, ...part)).map(itemFromRow)
+            await this.enricher.retitle(changed)
+          }
+        } catch (e) {
+          logger.warn("enrich retitle failed", e)
+        }
+      }
       if (items.length && this.enricher) {
         // 富化与入库在同一个临界区里：组的主条目按 seq 先后定，通知出去的条目已带富化结果。失败不影响入库，条目留 enriched = 0 等回填。
         try {

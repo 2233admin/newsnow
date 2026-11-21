@@ -134,7 +134,7 @@ export class EnrichStore {
   }
 
   /** 只重算清洗标题与标的（词典更新后）：不动去重键与分组。 */
-  async saveSymbolsOnly(rows: { seq: number, cleanTitle: string, origUrl: string | null, symbols: string[] }[]) {
+  async saveSymbolsOnly(rows: { seq: number, cleanTitle: string, origUrl: string | null, symbols: string[], titleKey?: string | null }[]) {
     for (const part of chunk(rows.map(r => r.seq), IN_PER_STATEMENT)) {
       await this.db.prepare(`DELETE FROM item_symbols WHERE seq IN (${part.map(() => "?").join(",")})`).run(...part)
     }
@@ -142,10 +142,13 @@ export class EnrichStore {
       await this.db.prepare(`INSERT OR IGNORE INTO item_symbols (symbol, seq) VALUES ${placeholders(2, part.length)}`).run(...part.flat())
     }
     for (const part of chunk(rows, 32)) {
+      // title_key 只在给了的时候更新（标题变了要跟着变；词典更新时不动去重键）
       await this.db.prepare(`
-        WITH v (seq, clean_title, orig_url) AS (VALUES ${placeholders(3, part.length)})
-        UPDATE items SET clean_title = v.clean_title, orig_url = v.orig_url FROM v WHERE items.seq = v.seq
-      `).run(...part.flatMap(r => [r.seq, r.cleanTitle, r.origUrl] as Primitive[]))
+        WITH v (seq, clean_title, orig_url, set_key, title_key) AS (VALUES ${placeholders(5, part.length)})
+        UPDATE items SET clean_title = v.clean_title, orig_url = v.orig_url,
+          title_key = CASE WHEN v.set_key = 1 THEN v.title_key ELSE items.title_key END
+        FROM v WHERE items.seq = v.seq
+      `).run(...part.flatMap(r => [r.seq, r.cleanTitle, r.origUrl, r.titleKey === undefined ? 0 : 1, r.titleKey ?? null] as Primitive[]))
     }
   }
 

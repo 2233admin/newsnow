@@ -56,6 +56,8 @@ export interface Enricher extends ItemEnricher {
   store: EnrichStore
   /** 只重算清洗标题与标的，不动分组（词典更新后用）。返回处理条数。 */
   resymbol: (batch?: number, onProgress?: (done: number) => void) => Promise<number>
+  /** 已入库的条目标题变了（再次采到）：清洗标题、标的、去重键跟着重算；seq 与分组不动。 */
+  retitle: (items: IngestedItem[]) => Promise<void>
   /** 给还没富化的历史条目补上（按 seq 顺序，规则与实时一样）。返回处理条数。 */
   backfill: (batch?: number, onProgress?: (done: number) => void) => Promise<number>
 }
@@ -153,6 +155,17 @@ export function createEnricher(db: Database): Enricher {
     }
   }
 
+  async function retitle(items: IngestedItem[]): Promise<void> {
+    // 还没富化的（enriched = 0）留给回填，那时用的就是新标题
+    const todo = items.filter(i => i.enriched > 0)
+    if (!todo.length) return
+    await store.saveSymbolsOnly(todo.map((item) => {
+      const cleaned = cleanTitle(item.title, item.url)
+      infoCache.delete(item.seq)
+      return { seq: item.seq, cleanTitle: cleaned.title, origUrl: cleaned.origUrl, symbols: extractSymbols(cleaned.title), titleKey: titleKey(cleaned.title) || null }
+    }))
+  }
+
   async function backfill(batch = 200, onProgress?: (done: number) => void): Promise<number> {
     let after = 0
     let total = 0
@@ -182,5 +195,5 @@ export function createEnricher(db: Database): Enricher {
     }
   }
 
-  return { store, enrich, backfill, resymbol }
+  return { store, enrich, retitle, backfill, resymbol }
 }
