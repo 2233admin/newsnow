@@ -327,6 +327,24 @@
     "interval": 1800000,
     "title": "头条"
   },
+  "ths": {
+    "title": "快讯",
+    "name": "同花顺",
+    "type": "realtime",
+    "column": "finance",
+    "home": "https://news.10jqka.com.cn/realtimenews.html",
+    "color": "red",
+    "interval": 120000
+  },
+  "taoguba": {
+    "title": "综合吧热帖",
+    "name": "淘股吧",
+    "type": "hottest",
+    "column": "finance",
+    "home": "https://www.tgb.cn/bbs/",
+    "color": "orange",
+    "interval": 600000
+  },
   "solidot": {
     "name": "Solidot",
     "column": "tech",
