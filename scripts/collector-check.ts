@@ -1,6 +1,7 @@
 /**
  * 本机自检：读采集库，逐个源打印观测数、采集轮数、条目数与健康状态，
  * 有源一条观测也没有就以非零退出码结束（#2184 验收「所有源都有观测记录」）。
+ * 内置源之外，已启用的用户源（`user:<slug>`，含预置订阅包启用的）也逐个列出、同样计入。
  *
  * 用法（先让服务跑一阵：`pnpm build && pnpm start`，或 `pnpm dev`）：
  *   pnpm collector:check                       # 读 .data/db.sqlite3
@@ -14,12 +15,13 @@ import { createDatabase } from "db0"
 import sqlite from "db0/connectors/better-sqlite3"
 import { projectDir } from "../shared/dir"
 import _sources from "../shared/sources.json"
+import { readEnabledUserSources } from "../server/registry/patrol-sources"
 
 interface SourceMeta {
   interval: number
   redirect?: string
 }
-const sources = _sources as Record<string, SourceMeta>
+const builtin = _sources as Record<string, SourceMeta>
 
 function arg(name: string) {
   const i = process.argv.indexOf(`--${name}`)
@@ -34,6 +36,7 @@ if (!existsSync(dbPath)) {
 }
 
 const db = createDatabase(sqlite({ path: dbPath }))
+const sources: Record<string, SourceMeta> = { ...builtin, ...await readEnabledUserSources(db) }
 const all = async (sql: string) => await db.prepare(sql).all() as any[]
 const tables = new Set((await all("SELECT name FROM sqlite_master WHERE type = 'table'")).map(r => r.name))
 if (!tables.has("observations") || !tables.has("source_health")) {
