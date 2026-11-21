@@ -148,3 +148,16 @@ describe("采集器与 /api/s 互不触发", () => {
     expect(await db.prepare("SELECT COUNT(*) AS n FROM observations").get()).toEqual({ n: 0 })
   })
 })
+
+describe("cache.getEntire 参数化", () => {
+  it("id 里带引号与 SQL 片段也只按字面匹配，不影响其他行；空列表返回空", async () => {
+    const { Cache } = await import("#/database/cache")
+    const cache = new Cache(db)
+    await cache.init()
+    await cache.set("weibo", news(1) as any)
+    const evil = `x' or '1'='1`
+    expect(await cache.getEntire([evil])).toEqual([])
+    expect((await cache.getEntire([evil, "weibo"])).map(c => c.id)).toEqual(["weibo"])
+    expect(await cache.getEntire([])).toEqual([])
+  })
+})
