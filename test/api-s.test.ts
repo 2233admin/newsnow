@@ -161,3 +161,18 @@ describe("cache.getEntire 参数化", () => {
     expect(await cache.getEntire([])).toEqual([])
   })
 })
+
+describe("cache.getEntire 去重与分块", () => {
+  it("重复 id 只返回一行；超过 100 个 id 也能全部查到", async () => {
+    const { Cache } = await import("#/database/cache")
+    const cache = new Cache(db)
+    await cache.init()
+    const ids = Array.from({ length: 250 }, (_, i) => `src${i}`)
+    for (const id of ids) await cache.set(id, news(1) as any)
+    const dup = await cache.getEntire(["src1", "src1", "src1"])
+    expect(dup.map(c => c.id)).toEqual(["src1"])
+    const all = await cache.getEntire([...ids, ...ids, "missing"])
+    expect(all).toHaveLength(250)
+    expect(new Set(all.map(c => c.id))).toEqual(new Set(ids))
+  })
+})

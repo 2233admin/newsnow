@@ -41,10 +41,15 @@ export class Cache {
   }
 
   async getEntire(keys: string[]): Promise<CacheInfo[]> {
-    if (!keys.length) return []
-    const placeholders = keys.map(() => "?").join(",")
-    const res = await this.db.prepare(`SELECT id, data, updated FROM cache WHERE id IN (${placeholders})`).all(...keys) as any
-    const rows = (res.results ?? res) as CacheRow[]
+    // 去重后按 D1 每条语句 100 个绑定参数的上限分块查询（https://developers.cloudflare.com/d1/platform/limits/ ，读取日期 2026-11-21）
+    const ids = [...new Set(keys)]
+    const rows: CacheRow[] = []
+    for (let i = 0; i < ids.length; i += 100) {
+      const part = ids.slice(i, i + 100)
+      const placeholders = part.map(() => "?").join(",")
+      const res = await this.db.prepare(`SELECT id, data, updated FROM cache WHERE id IN (${placeholders})`).all(...part) as any
+      rows.push(...((res.results ?? res) as CacheRow[]))
+    }
 
     /**
      * https://developers.cloudflare.com/d1/build-with-d1/d1-client-api/#return-object
