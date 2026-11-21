@@ -1,0 +1,20 @@
+import { getFeed } from "#/feed/runtime"
+import { guarded } from "#/registry/http"
+
+/**
+ * 信息流查询（#2186）：新闻大面板、个股面板、晨报、白板、agent 读同一个接口。只给本机，规则同用户源接口（registry/http.ts）：
+ * 条目里有 user:* 的订阅内容，不对外。
+ *
+ * 参数（都可省）：
+ *   from / to      排序时间范围，毫秒或日期串；from 含、to 不含
+ *   since          入库时间 ≥ since 的（拉新；含端点，客户端按 seq 去重）
+ *   source         来源 id，逗号分隔或重复；`user:*` 这种带 * 的是前缀
+ *   category       分类，逗号分隔或重复
+ *   q              关键词，空白分隔，标题须包含每一个词
+ *   symbol         标的（待 #2188 富化；现在返回空并在 unimplemented 里标明）
+ *   limit          每页条数，1–200，默认 50
+ *   cursor         上一页响应的 nextCursor
+ *   includeInactive=1  含停用与已删除的源的历史条目
+ * 排序：feedTs 倒序，同一毫秒按 sourceId、itemId 倒序（见 server/feed/store.ts）。
+ */
+export default defineEventHandler(event => guarded(event, async () => (await getFeed()).service.query(getQuery(event))))

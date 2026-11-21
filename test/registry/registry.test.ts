@@ -41,6 +41,24 @@ describe("运行时注册表", () => {
     expect(getters.hn).toBe(w.builtin)
   })
 
+  it("describe：内置源给显示名与分类，用户源含停用的；redirect 别名不列", async () => {
+    const w = await setup()
+    const registry = createRegistry({
+      builtinSources: { hn: { interval: MIN, name: "Hacker News", title: "热门", column: "tech" }, alias: { interval: MIN, redirect: "hn" as any, name: "别名" }, plain: { interval: MIN } },
+      builtinGetters: {},
+      store: w.store,
+      fetchText: w.fetchText,
+      log: quiet,
+    })
+    await add(w, { category: "我的" })
+    await w.service.update("example", { enabled: false })
+    expect(await registry.describe()).toEqual([
+      { id: "hn", name: "Hacker News 热门", category: "tech", builtin: true, enabled: true },
+      { id: "plain", name: "plain", category: "", builtin: true, enabled: true },
+      { id: "user:example", name: "示例", category: "我的", builtin: false, enabled: false },
+    ])
+  })
+
   it("停用的用户源不进快照；重新启用又回来", async () => {
     const w = await setup()
     await add(w)
