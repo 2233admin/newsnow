@@ -1,0 +1,1309 @@
+{
+ "meta": {
+  "what": "标的识别的标注样本（XartLab/KATANAview#2188）：从真采集的财经快讯里按固定随机种子抽的 200 条，逐条人工标注标题里点名的 A 股、美股（含中概 ADR）、加密币。",
+  "sampling": "scripts/enrich-sample.ts --n 200 --seed 2188；抽样池 446 条：jin10、cls-telegraph、cls-depth、wallstreetcn-quick、wallstreetcn-news、ths、gelonghui、fastbull-express、fastbull-news、mktnews-flash、36kr-quick，2026-11-22 00:47 本沙箱采集",
+  "annotator": "Claude（Sonnet），读标题逐条标，标注时没有看识别器的输出；与写词典的是同一个会话，不是独立标注者。最终的代码用词典里的写法对齐",
+  "rules": [
+   "标的 = 标题字面点名的公司（全称、简称、代码）或币名；不靠推断（人名、产品名、「龙头」「概念股」不标）",
+   "券商等作为消息出处被点名的也标",
+   "只标三个市场：A 股（沪深北）、美股（含中概 ADR）、加密币；港股、台股、日股、指数、ETF、外汇、期货不标",
+   "同一家公司的几个股份类别算同一个标的（GOOG 与 GOOGL）",
+   "拿不准的不标，原因写在 note 里"
+  ],
+  "pool": 446
+ },
+ "samples": [
+  {
+   "id": "cls-depth/2540279",
+   "source": "cls-depth",
+   "title": "SpaceX“轨道梦”遭婉拒 贷款人担忧芯片去了太空就再也收不回来！",
+   "symbols": [
+    "SPCX.XNAS"
+   ]
+  },
+  {
+   "id": "36kr-quick//newsflashes/4079129043653510",
+   "source": "36kr-quick",
+   "title": "美新科技：子公司星曜宇航已启动4米级舱段生产",
+   "symbols": [
+    "301588.XSHE"
+   ]
+  },
+  {
+   "id": "wallstreetcn-news/41960209",
+   "source": "wallstreetcn-news",
+   "title": "老黄陈年黑料被扒了个底朝天，疯狂打脸马斯克",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540714",
+   "source": "cls-depth",
+   "title": "特朗普：中俄美元首会晤“史无前例”“意义重大”",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387366_1",
+   "source": "fastbull-news",
+   "title": "美伊“两天计划”浮出水面，军事打击风险仍未消退",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121215828073800",
+   "source": "jin10",
+   "title": "芬兰边防警卫队：我们尚未掌握“斯巴达二号”所载货物的确认信息，但不能排除船上有军事物资。",
+   "symbols": []
+  },
+  {
+   "id": "36kr-quick//newsflashes/4079019737076616",
+   "source": "36kr-quick",
+   "title": "优必选入选恒生科技指数，在资讯科技业中位列第14位",
+   "symbols": [],
+   "note": "优必选只在港股上市，港股不在三个市场内，不标"
+  },
+  {
+   "id": "ths/5728771",
+   "source": "ths",
+   "title": "重大突破！量子计算机“高速内存”全球首次真机实现",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121213007177800",
+   "source": "jin10",
+   "title": "VIP立减600解锁新功能！",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728829",
+   "source": "ths",
+   "title": "美国今年麻疹确诊病例已超5800例",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121220510142800",
+   "source": "jin10",
+   "title": "伊朗伊斯兰革命卫队：在波斯湾北部击落一架敌方侦察无人机。",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/3786341",
+   "source": "wallstreetcn-news",
+   "title": "付鹏：避风港即将失守？VIX倒挂叠加负Gamma效应，如何放大美股共振下杀？【付鹏说图表】",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540707",
+   "source": "cls-depth",
+   "title": "欧美主要股指集体走低 贵金属重挫现货银价跌近4% | 环球市场",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203662",
+   "source": "wallstreetcn-quick",
+   "title": "俄方称克里米亚大桥铁路运输已全面恢复",
+   "symbols": []
+  },
+  {
+   "id": "36kr-quick//newsflashes/4079025427747719",
+   "source": "36kr-quick",
+   "title": "中信证券：预计全国性机制电价政策有望在2027年推出",
+   "symbols": [
+    "600030.XSHG"
+   ],
+   "note": "券商作为消息出处；点名了公司，标"
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361606_212_1",
+   "source": "fastbull-express",
+   "title": "黎巴嫩总统：黎巴嫩正面临攸关存亡的考验，同时遭受以色列占领以及来自部分伊朗势力的外部干涉。",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540802",
+   "source": "cls-telegraph",
+   "title": "伊朗外长：伊方仍愿通过外交途径解决与美国的争端",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122002844266800",
+   "source": "jin10",
+   "title": "卡塔尔与德国联合声明：我们谴责胡塞组织在也门和对沙特阿拉伯的攻击，并呼吁该组织立即停止一切军事行动。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361547_1_1",
+   "source": "fastbull-express",
+   "title": "乌克兰总统泽连斯基：现在说乌克兰在战争结束时是否会加入北约还为时过早。",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/3786428",
+   "source": "wallstreetcn-news",
+   "title": "浙江老板们组团投AI！十余家上市公司借道16.5亿元基金入股DeepSeek",
+   "symbols": [],
+   "note": "DeepSeek 未上市，不标"
+  },
+  {
+   "id": "mktnews-flash/01a1fe66-c2fe-7bbc-ac9f-185bfaf2ecc1",
+   "source": "mktnews-flash",
+   "title": "The Finnish Border Guard has no confirmed information on the cargo aboard the Sparta II but cannot rule out military materiel being on board.",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387251_1",
+   "source": "fastbull-news",
+   "title": "2026胡润百富榜：前十名排名、张一鸣身家与AI财富变局",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203653",
+   "source": "wallstreetcn-quick",
+   "title": "神舟二十四号任务完成最后一次全区合练，发射场做好发射前各项准备。（新华社）",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387455_1",
+   "source": "fastbull-news",
+   "title": "2026美国中期选举结果：国会易手与美元、黄金、美股影响",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fefc-4a49-7bbc-ac9f-d3023ad71f90",
+   "source": "mktnews-flash",
+   "title": "Lebanon’s independence has no alternative; the only guarantee is the Lebanese state itself, the president said.",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540573",
+   "source": "cls-depth",
+   "title": "多家公募集中上报首批双创半导体、沪深港算力、航运ETF",
+   "symbols": []
+  },
+  {
+   "id": "36kr-quick//newsflashes/4078915481179273",
+   "source": "36kr-quick",
+   "title": "软银孙正义被曝曾考虑1万亿美元收购SK海力士",
+   "symbols": [
+    "SKHY.XNAS"
+   ],
+   "note": "软银（日股）不标"
+  },
+  {
+   "id": "mktnews-flash/01a1fdff-0014-7bbc-ac9e-a7b3e0060f79",
+   "source": "mktnews-flash",
+   "title": "No casualties reported after magnitude-5.6 earthquake in Delingha, Qinghai",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361605_212_1",
+   "source": "fastbull-express",
+   "title": "卡塔尔-德国声明：呼吁伊朗停止向胡塞武装提供武器和支持，并重申对也门的统一与主权的承诺。",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728869",
+   "source": "ths",
+   "title": "亿纬锂能董事长：锂电池消费税落地后会有相当一部分企业退出市场",
+   "symbols": [
+    "300014.XSHE"
+   ]
+  },
+  {
+   "id": "ths/5728819",
+   "source": "ths",
+   "title": "美货运“龙”飞船脱离空间站启程返回地球",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361591_212_1",
+   "source": "fastbull-express",
+   "title": "英国政府：乌克兰将能够在英国设立生产设施。",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122003856770800",
+   "source": "jin10",
+   "title": "北约秘书长吕特在华沙承诺，在俄罗斯导弹和无人机进入波兰领空后，北约将保卫波兰的“每一寸”领土，并称这一事件“危险”。",
+   "symbols": []
+  },
+  {
+   "id": "gelonghui//news/5359396",
+   "source": "gelonghui",
+   "title": "傲基股份(02519.HK)以1.05亿元转让海南小虎鲸合伙份额",
+   "symbols": [],
+   "note": "港股 02519.HK，不标"
+  },
+  {
+   "id": "cls-depth/2540494",
+   "source": "cls-depth",
+   "title": "恒生科技指数“扩容”名单公布：宁德时代、中际旭创等20股入选",
+   "symbols": [
+    "300750.XSHE",
+    "300308.XSHE"
+   ]
+  },
+  {
+   "id": "mktnews-flash/01a1fe36-d01d-7bbc-ac9e-f1b889696bdc",
+   "source": "mktnews-flash",
+   "title": "Saudi Arabia lifts hazard alert in Jizan region.",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fefc-95de-7bbc-ac9f-dcd9b1f8b353",
+   "source": "mktnews-flash",
+   "title": "Lebanon cannot celebrate independence as if its sovereignty were complete while its land remains occupied, the president said.",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540776",
+   "source": "cls-depth",
+   "title": "特朗普：期待黄仁勋回英伟达",
+   "symbols": [
+    "NVDA.XNAS"
+   ]
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387473_1",
+   "source": "fastbull-news",
+   "title": "美伊谈判释放新信号，英央行三年来首次加息",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2539928",
+   "source": "cls-depth",
+   "title": "英伟达三季报落地，A股入链企业影响多大？券商观点落地",
+   "symbols": [
+    "NVDA.XNAS"
+   ]
+  },
+  {
+   "id": "wallstreetcn-news/3786421",
+   "source": "wallstreetcn-news",
+   "title": "“数学界第一神山”被攻克？Anthropic数学家宣称证明黎曼猜想，给出1700万行Lean源码，AI证明文件超过25万页",
+   "symbols": [
+    "ANT.XNAS"
+   ]
+  },
+  {
+   "id": "mktnews-flash/01a1fdba-5283-7bbc-ac9e-3e85499c15b0",
+   "source": "mktnews-flash",
+   "title": "Rail traffic on Crimea Bridge fully restored, Russia says",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203694",
+   "source": "wallstreetcn-quick",
+   "title": "俄罗斯列宁格勒州州长：遭袭货船上的情况已得到控制，目前正采取措施，力争使其恢复航行，继续前往加里宁格勒。",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fdad-c0fc-7bbc-ac9e-2ca9c56981a8",
+   "source": "mktnews-flash",
+   "title": "Sources: Measures proposed by Denmark include suspending tourist visa issuance to Russian citizens. Denmark will present the proposal at an ambassadors’ meeting in Brussels on Monday.",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728825",
+   "source": "ths",
+   "title": "2026脑机接口十五项标志性成果发布",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2539778",
+   "source": "cls-depth",
+   "title": "为加息50基点敞开大门？美联储又一官员“放鹰”",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203654",
+   "source": "wallstreetcn-quick",
+   "title": "国家数据局：积极拓展词元服务应用场景 健全词元计量计费、质量测评等标准规范",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fe77-f018-7bbc-ac9f-37c283654767",
+   "source": "mktnews-flash",
+   "title": "Iranian Deputy Foreign Minister Kazem Gharibabadi said a Qatari delegation visited Tehran last night and held two hours of talks, TASNIM NEWS reported.",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387573_1",
+   "source": "fastbull-news",
+   "title": "英伟达被曝拟罢免黄仁勋：股价急跌与业务风险",
+   "symbols": [
+    "NVDA.XNAS"
+   ]
+  },
+  {
+   "id": "wallstreetcn-quick/3203668",
+   "source": "wallstreetcn-quick",
+   "title": "伊朗称美军掩护油轮非法通行，霍尔木兹海峡触雷事故不断",
+   "symbols": []
+  },
+  {
+   "id": "36kr-quick//newsflashes/4078911164617856",
+   "source": "36kr-quick",
+   "title": "港股年内发生超70起要约收购， 数量已超过去年全年",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2539680",
+   "source": "cls-depth",
+   "title": "一文穿透：“AI界央行”英伟达钱都流向了哪？",
+   "symbols": [
+    "NVDA.XNAS"
+   ]
+  },
+  {
+   "id": "wallstreetcn-quick/3203651",
+   "source": "wallstreetcn-quick",
+   "title": "段永平：不碰非上市公司，字节估值在6000亿美元会有兴趣的潜台词是上市后",
+   "symbols": [],
+   "note": "字节未上市，不标"
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361542_212_1",
+   "source": "fastbull-express",
+   "title": "市场消息：美国国会共和党人准备阻止特朗普提名的两名国防部长人选。",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122000638652800",
+   "source": "jin10",
+   "title": "英国政府：乌克兰将能够在英国设立生产设施。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361602_212_1",
+   "source": "fastbull-express",
+   "title": "卡塔尔-德国声明：一致认为，无论在任何情况下，伊朗都不得发展或获取核武器。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387736_1",
+   "source": "fastbull-news",
+   "title": "美伊对峙与俄乌冲突双双升级，美国通胀压力再引政策担忧",
+   "symbols": []
+  },
+  {
+   "id": "gelonghui//news/5359485",
+   "source": "gelonghui",
+   "title": "优必选入选恒生科技指数，在资讯科技业中位列第14位",
+   "symbols": [],
+   "note": "同上（优必选，港股）"
+  },
+  {
+   "id": "cls-telegraph/2540845",
+   "source": "cls-telegraph",
+   "title": "伊朗称击中一架F-16战机",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540244",
+   "source": "cls-depth",
+   "title": "特斯拉Cybercab最新航拍图曝光： 车顶方形面板疑为集成星链",
+   "symbols": [
+    "TSLA.XNAS"
+   ]
+  },
+  {
+   "id": "ths/5729131",
+   "source": "ths",
+   "title": "青海海西州德令哈市发生5.6级地震",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fe00-aabf-7bbc-ac9e-aed823620bb8",
+   "source": "mktnews-flash",
+   "title": "Russia says cargo ship attacked by drones; Finland says vessel caught fire in its waters",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fe6a-74d9-7bbc-ac9f-216a43d3ea60",
+   "source": "mktnews-flash",
+   "title": "The situation aboard the cargo ship attacked in Russia’s Leningrad region is under control, the regional governor said. Efforts are underway to get it sailing again toward Kaliningrad.",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361572_212_1",
+   "source": "fastbull-express",
+   "title": "美国总统特朗普：否决一切将一事无成，不是可行之道。",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729179",
+   "source": "ths",
+   "title": "泽连斯基：打击克里米亚大桥是对俄军袭击乌桥梁的回应",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/3786426",
+   "source": "wallstreetcn-news",
+   "title": "高盛交易员“重拾2018年剧本”：至今清晰记得“12月24日那天，客户问为什么跌这么多？我完全不知道”",
+   "symbols": [
+    "GS.XNYS"
+   ]
+  },
+  {
+   "id": "gelonghui//news/5359397",
+   "source": "gelonghui",
+   "title": "礼邦医药-B(09637.HK)11月20日耗资59.37万港元回购2.93万股",
+   "symbols": [],
+   "note": "港股 09637.HK，不标"
+  },
+  {
+   "id": "mktnews-flash/01a1fdd4-8fc3-7bbc-ac9e-7b28c90fc8ee",
+   "source": "mktnews-flash",
+   "title": "Finnish Border Guard: The damaged vessel has drifted from international waters into Finnish territorial waters.",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fe02-3ccf-7bbc-ac9e-b7a1778dce87",
+   "source": "mktnews-flash",
+   "title": "French president’s office calls latest EU budget proposal 'very disappointing'",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/3786425",
+   "source": "wallstreetcn-news",
+   "title": "融资收购SK海力士？孙正义一度考虑“万亿豪赌”，已接洽华尔街",
+   "symbols": [
+    "SKHY.XNAS"
+   ]
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387628_1",
+   "source": "fastbull-news",
+   "title": "中国模型包揽 OpenRouter 周榜前四，腾讯 Hy4 的用量意味着什么？",
+   "symbols": [],
+   "note": "腾讯（港股）不标；OpenRouter 未上市"
+  },
+  {
+   "id": "wallstreetcn-quick/3203677",
+   "source": "wallstreetcn-quick",
+   "title": "行业报告：中国脑机接口产业集聚于三大城市群",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fdd1-9f2b-7bbc-ac9e-68dd0b9e0b9c",
+   "source": "mktnews-flash",
+   "title": "Magnitude 5.6 earthquake strikes Delingha, Qinghai; China launches Level IV emergency response",
+   "symbols": []
+  },
+  {
+   "id": "gelonghui//news/5359399",
+   "source": "gelonghui",
+   "title": "亿都(国际控股)(00259.HK)中期综合收入8.07亿港元，同比增加45.5%",
+   "symbols": [],
+   "note": "港股 00259.HK，不标"
+  },
+  {
+   "id": "ths/5729099",
+   "source": "ths",
+   "title": "多家品牌宣布：下调金饰克价",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387454_1",
+   "source": "fastbull-news",
+   "title": "择期外汇远期和定日远期怎么选？付款改期先算掉期成本",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387411_1",
+   "source": "fastbull-news",
+   "title": "外汇已实现点差为负，为什么不等于返现或盈利？",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540800",
+   "source": "cls-telegraph",
+   "title": "英国海上贸易行动办公室：一艘油轮在霍尔木兹海峡遭袭",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387587_1",
+   "source": "fastbull-news",
+   "title": "英伟达是做什么的？从GPU到AI基础设施，看懂它的赚钱方式",
+   "symbols": [
+    "NVDA.XNAS"
+   ]
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387219_1",
+   "source": "fastbull-news",
+   "title": "特朗普称随时可能再打伊朗，法国反政府示威再升级",
+   "symbols": []
+  },
+  {
+   "id": "36kr-quick//newsflashes/4079153796354949",
+   "source": "36kr-quick",
+   "title": "问界M9车主被曝开启辅助驾驶时睡觉，官方暂无回应",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540827",
+   "source": "cls-telegraph",
+   "title": "泽连斯基：打击克里米亚大桥是对俄军袭击乌桥梁的回应",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387431_1",
+   "source": "fastbull-news",
+   "title": "伊朗提升战备并坚持谈判条件，美国中期选举进入关键时刻",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361595_212_1",
+   "source": "fastbull-express",
+   "title": "芬兰边防警卫队：对俄罗斯船只的袭击很可能是乌克兰所为。",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540809",
+   "source": "cls-telegraph",
+   "title": "印尼西南群岛附近发生6.6级左右地震",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729015",
+   "source": "ths",
+   "title": "南水北调“天河”大模型完成升级",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540841",
+   "source": "cls-telegraph",
+   "title": "泽连斯基会见英国国防大臣 讨论乌防空能力建设",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122002854295800",
+   "source": "jin10",
+   "title": "卡塔尔与德国联合声明：呼吁伊朗停止向胡塞武装提供武器和支持，并重申对也门的统一与主权的承诺。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387397_1",
+   "source": "fastbull-news",
+   "title": "同一份外汇报价，平均点差为何不同？分清时间、更新次数与成交权重",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/3786416",
+   "source": "wallstreetcn-news",
+   "title": "华尔街见闻早餐FM-Radio | 2026年11月21日",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2539661",
+   "source": "cls-depth",
+   "title": "AI热潮今年已见顶？华尔街警告声迭起，小摩加入但坚称影响有限！",
+   "symbols": [
+    "JPM.XNYS"
+   ],
+   "note": "小摩 = 摩根大通"
+  },
+  {
+   "id": "mktnews-flash/01a1feef-e86c-7bbc-ac9f-a873bdb93995",
+   "source": "mktnews-flash",
+   "title": "Qatar and Germany condemned Iran’s attacks and threats against merchant ships and opposed any actions that impede navigation through the Strait of Hormuz.",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fedc-3584-7bbc-ac9f-6abdfe02ebee",
+   "source": "mktnews-flash",
+   "title": "UK government: New industrial arrangements with Ukraine.",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540807",
+   "source": "cls-telegraph",
+   "title": "重庆发布86项低空产业发展机会清单 总投资约289亿元",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fe5a-094b-7bbc-ac9f-02987a9c6b61",
+   "source": "mktnews-flash",
+   "title": "Finland’s Defence Ministry said a Russian helicopter was suspected of violating Finnish airspace. The incident may be linked to a rescue or surveillance operation involving a cargo ship damaged in the Gulf of Finland.",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729285",
+   "source": "ths",
+   "title": "卡塔尔代表团抵伊朗磋商两小时",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122000824531800",
+   "source": "jin10",
+   "title": "芬兰边防警卫队：对俄罗斯船只的袭击很可能是乌克兰所为。",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121210458166800",
+   "source": "jin10",
+   "title": "泽连斯基会见英国国防大臣 讨论乌防空能力建设",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fdad-3dee-7bbc-ac9e-23709ce71e7a",
+   "source": "mktnews-flash",
+   "title": "Sources: Denmark told EU member states that, after foiling an assassination attempt, Europe must take concrete action to demonstrate its resolve against Russia. Denmark called for further significant restrictions on Russian nationals’ access to the Schengen area.",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361609_212_1",
+   "source": "fastbull-express",
+   "title": "黎巴嫩总统：我们希望与伊朗国家间的友谊并不赋予任何一方干涉另一方决定的权利。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361579_212_1",
+   "source": "fastbull-express",
+   "title": "美国总统特朗普：并不太在意推翻伊朗政权，我们先后与三位领导人打交道，这已是对（该国）体制的彻底变革。",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729091",
+   "source": "ths",
+   "title": "两艘油轮接连在驶出霍尔木兹海峡时遇袭",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361578_212_1",
+   "source": "fastbull-express",
+   "title": "美国总统特朗普：万斯和鲁比奥表现出色，两人在2028年大选前都很受欢迎。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387716_1",
+   "source": "fastbull-news",
+   "title": "特朗普权衡对伊朗发动新一轮打击，美联储会议纪要释放鹰派信号",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540814",
+   "source": "cls-telegraph",
+   "title": "两艘油轮接连在驶出霍尔木兹海峡时遇袭",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387659_1",
+   "source": "fastbull-news",
+   "title": "美军三艘航母部署中东，美联储加息预期升温",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fef0-572b-7bbc-ac9f-b6abb0ef9045",
+   "source": "mktnews-flash",
+   "title": "Qatar and Germany condemned Houthi attacks in Yemen and on Saudi Arabia, calling on the group to immediately cease all military operations.",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540658",
+   "source": "cls-depth",
+   "title": "华尔街官宣迄今最大GPU租赁融资 就算是SpaceX也得支付“AI溢价”",
+   "symbols": [
+    "SPCX.XNAS"
+   ]
+  },
+  {
+   "id": "jin10/20261121223204025800",
+   "source": "jin10",
+   "title": "卡塔尔代表团访问德黑兰，推动美伊恢复谈判",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728833",
+   "source": "ths",
+   "title": "黄河内蒙古段进入2026至2027年度凌汛期",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728983",
+   "source": "ths",
+   "title": "伊朗外交部长：浓缩铀不会被运出伊朗境外",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540818",
+   "source": "cls-telegraph",
+   "title": "伊朗革命卫队称击落第19架美军MQ-1型无人机",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387333_1",
+   "source": "fastbull-news",
+   "title": "币安遭遇63亿美元安全事件：DevOps工程师电脑疑被入侵，SAFU能否保障用户资产安全？",
+   "symbols": [],
+   "note": "币安是交易所，不是币，不标 BNB"
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387661_1",
+   "source": "fastbull-news",
+   "title": "可口可乐营业利润增长12%：靠涨价，还是卖得更多？",
+   "symbols": [
+    "KO.XNYS"
+   ]
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387231_1",
+   "source": "fastbull-news",
+   "title": "换汇零手续费就更便宜？按净到账金额算费用临界点",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387222_1",
+   "source": "fastbull-news",
+   "title": "美元兑日元跌10%，为什么日元兑美元涨11.11%？",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361537_212_1",
+   "source": "fastbull-express",
+   "title": "伊朗伊斯兰革命卫队21日在社交媒体上说，革命卫队当天在格什姆岛上空击落一架美军MQ-1型无人机。这是伊方击落的第19架美军该型无人机。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387324_1",
+   "source": "fastbull-news",
+   "title": "美国经济增长超预期，欧洲能源危机加剧央行政策分歧",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540763",
+   "source": "cls-depth",
+   "title": "券商也“扫货”首批主动ETF，国泰海通覆盖9只产品居首，招商、申万宏源紧随其后",
+   "symbols": [
+    "601211.XSHG",
+    "600999.XSHG",
+    "000166.XSHE"
+   ],
+   "note": "招商 = 招商证券（券商简称，标题只写了「招商」）"
+  },
+  {
+   "id": "cls-depth/2539903",
+   "source": "cls-depth",
+   "title": "贾国龙又“上新”了！这次改卖火锅，人均消费102元",
+   "symbols": [],
+   "note": "西贝未上市，不标"
+  },
+  {
+   "id": "ths/5729027",
+   "source": "ths",
+   "title": "神舟二十四号任务完成最后一次全区合练，发射场做好发射前各项准备",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203685",
+   "source": "wallstreetcn-quick",
+   "title": "比特币涨穿60000美元，日内涨2.53%。\n\n以太坊涨穿1700美元，日内涨5.24%。",
+   "symbols": [
+    "BTCUSDT.BINANCE",
+    "ETHUSDT.BINANCE"
+   ]
+  },
+  {
+   "id": "jin10/20261122002714505800",
+   "source": "jin10",
+   "title": "胡塞武装称沙特过去24小时发动71次空袭和导弹袭击",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fe84-2e13-7bbc-ac9f-4743d31abaa2",
+   "source": "mktnews-flash",
+   "title": "A Qatari envoy’s talks with Iranian officials aimed to facilitate a resumption of U.S.-Iran negotiations, Axios reported, citing sources.",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729161",
+   "source": "ths",
+   "title": "伊朗称一油轮在霍尔木兹海峡以东海域起火",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203658",
+   "source": "wallstreetcn-quick",
+   "title": "两艘油轮接连在驶出霍尔木兹海峡时遇袭",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/3786438",
+   "source": "wallstreetcn-news",
+   "title": "郭明錤：谷歌将明年博通设计TPU出货量下调20%，计划增加联发科份额",
+   "symbols": [
+    "GOOG.XNAS",
+    "AVGO.XNAS"
+   ],
+   "note": "谷歌取 GOOG 或 GOOGL 均算对；联发科（台股）不标"
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361550_212_1",
+   "source": "fastbull-express",
+   "title": "泽连斯基：我在基辅与英国国防大臣进行了富有成效的会晤。感谢英国提供新的国防和人道主义援助——总额超过5亿英镑。这极大地加强了我们的防御能力。我们讨论了乌克兰目前所需的具体防御能力。首要的是防空系统，以保护我们的能源基础设施、物流、供水系统以及其他保障基辅及各地区正常生活的设施。虽然英国自身没有“爱国者”导弹系统，但它在欧洲乃至全球拥有广泛的联系，能够协助寻找所需的反弹道导弹系统。我们对此寄予厚望。我们还探讨了联合生产和远程打击能力。通过合作，我们可以显著增强乌克兰的导弹项目。",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540591",
+   "source": "cls-depth",
+   "title": "标普500指数快速跌破关键均线后 技术派关注哪些止跌信号？",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2539722",
+   "source": "cls-depth",
+   "title": "光伏寒意未消，龙头分开作答：2027年装机需求能否迎来小幅反弹？",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203657",
+   "source": "wallstreetcn-quick",
+   "title": "重庆发布86项低空产业发展机会清单 总投资约289亿元",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121224650058800",
+   "source": "jin10",
+   "title": "美国中央司令部：伊朗革命卫队声称昨日击中并损坏一架美国F-16战斗机，迫使其紧急降落。此说法不实。事实是，伊朗昨日根本没有攻击美国F-16战斗机。美国在中东的所有军用战斗机均安全无恙，全部可查。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361555_212_1",
+   "source": "fastbull-express",
+   "title": "伊朗军方称，其防空导弹在海湾地区上空对一架美国F-16战斗机造成损伤，迫使其紧急降落。",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540850",
+   "source": "cls-telegraph",
+   "title": "美军中央司令部：伊朗击伤美军F-16战机说法不实",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387217_1",
+   "source": "fastbull-news",
+   "title": "外汇同样各一手，不等于美元对冲：按货币腿重算组合敞口",
+   "symbols": []
+  },
+  {
+   "id": "gelonghui//news/5359490",
+   "source": "gelonghui",
+   "title": "从“天数地算”到“天基主算”：国星宇航上市，太空算力走向基础设施化",
+   "symbols": [],
+   "note": "国星宇航上市（新股）：词典与标注者都没有它的代码，没标"
+  },
+  {
+   "id": "jin10/20261121230007642800",
+   "source": "jin10",
+   "title": "金十数据整理：周六重要消息汇总",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fdbd-1e21-7bbc-ac9e-400782566762",
+   "source": "mktnews-flash",
+   "title": "Magnitude 5.7 earthquake detected near Delingha, Qinghai",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121215731527800",
+   "source": "jin10",
+   "title": "芬兰边防警卫队：已知货船“斯巴达二号”与俄罗斯武装部队有关联。",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121215522444800",
+   "source": "jin10",
+   "title": "北约秘书长吕特：北约将保卫波兰领土的每一寸土地。",
+   "symbols": []
+  },
+  {
+   "id": "gelonghui//news/5359403",
+   "source": "gelonghui",
+   "title": "数科集团(02350.HK)盈警：预计中期亏损约2370万港元",
+   "symbols": [],
+   "note": "港股 02350.HK，不标"
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387475_1",
+   "source": "fastbull-news",
+   "title": "外汇定盘单怎么收费？用一笔200万欧元订单算清加价和分批成交成本",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729197",
+   "source": "ths",
+   "title": "泽连斯基：在基辅与英国国防大臣会晤，英方提供超5亿英镑新援助",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540778",
+   "source": "cls-depth",
+   "title": "重磅预警！高盛“恐慌指数”逼近最大值：美股下周恐还有一波大规模抛售",
+   "symbols": [
+    "GS.XNYS"
+   ]
+  },
+  {
+   "id": "wallstreetcn-quick/3203664",
+   "source": "wallstreetcn-quick",
+   "title": "青海海西州德令哈市发生5.6级地震",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728883",
+   "source": "ths",
+   "title": "东方港湾：中国股市值得更强信心",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729199",
+   "source": "ths",
+   "title": "欧盟再对乌提供10亿欧元军事支持",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1feef-06bf-7bbc-ac9f-9f2fe0c82c88",
+   "source": "mktnews-flash",
+   "title": "Houthis say Saudi Arabia carried out 71 air and missile strikes in past 24 hours",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121222508130800",
+   "source": "jin10",
+   "title": "伊朗革命卫队总司令艾哈迈德·瓦希迪表示，敌人面临的事件只是开始，强调敌人将目睹更多的屈辱和失败。",
+   "symbols": []
+  },
+  {
+   "id": "gelonghui//news/5359487",
+   "source": "gelonghui",
+   "title": "中信建投食品饮料2027年投资策略：周期底部范式重构，红利守正成长出奇",
+   "symbols": [
+    "601066.XSHG"
+   ],
+   "note": "中信建投在这里是研报的出处；点名了公司，标"
+  },
+  {
+   "id": "cls-depth/2540759",
+   "source": "cls-depth",
+   "title": "券商股价跌出连锁反应，可转债“转不动”，除自掏腰包，还有何破局之道？",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361539_1_1",
+   "source": "fastbull-express",
+   "title": "法国总统府：法国认为欧盟最新预算提案“非常令人失望”，不能作为达成协议的基础。",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729025",
+   "source": "ths",
+   "title": "世界数据组织医疗健康专业委员会在京启动运行",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387360_1",
+   "source": "fastbull-news",
+   "title": "在岸与离岸人民币价差收窄，为什么不等于人民币升值？",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122000729857800",
+   "source": "jin10",
+   "title": "伊朗外交部长：如果美国接受伊朗提出的符合国际法的合理条件，重新开放霍尔木兹海峡并不困难。",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121223912660800",
+   "source": "jin10",
+   "title": "伊朗副外长表示，伊朗将经济封锁视为战争行为，并将采取一切必要措施打破封锁。",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122000854698800",
+   "source": "jin10",
+   "title": "SpaceX：龙飞船预计将于太平洋时间下午2:05（北京时间次日上午6:05）左右重返地球大气层，并在加利福尼亚州南部洛杉矶附近海岸溅落。",
+   "symbols": [
+    "SPCX.XNAS"
+   ]
+  },
+  {
+   "id": "ths/5729227",
+   "source": "ths",
+   "title": "伊朗称击中一架F-16战机",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361601_212_1",
+   "source": "fastbull-express",
+   "title": "胡塞武装：过去24小时内，沙特战机对贝达、阿姆兰、哈杰、萨达、拉赫季、塔伊兹、焦夫和马里布等省的民用目标实施了71次空袭和导弹打击。这些袭击由从哈米斯穆谢特和塔伊夫军事基地起飞的F-15和台风战机实施，导弹袭击则来自吉赞。这些袭击造成平民伤亡，包括死伤。这使得自我国冲突升级以来，沙特领导的联军空袭和导弹打击总数达到5500次。",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121224421552800",
+   "source": "jin10",
+   "title": "伊朗副外长：核谈判尚未开始",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fedc-e4ed-7bbc-ac9f-76c5d8c72fbd",
+   "source": "mktnews-flash",
+   "title": "Iran’s foreign minister said reopening the Strait of Hormuz would not be difficult if the U.S. accepts Iran’s reasonable conditions, which he said are consistent with international law.",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fee9-ebce-7bbc-ac9f-97407d49cc1d",
+   "source": "mktnews-flash",
+   "title": "Trump says he is seeking a permanent deal with Iran",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729065",
+   "source": "ths",
+   "title": "重庆发布86项低空产业发展机会清单 总投资约289亿元",
+   "symbols": []
+  },
+  {
+   "id": "mktnews-flash/01a1fede-2fdf-7bbc-ac9f-80ceb4830f48",
+   "source": "mktnews-flash",
+   "title": "SpaceX: Dragon is expected to reenter Earth's atmosphere at around 2:05 p.m. Pacific time and splash down off the coast near Los Angeles in Southern California.",
+   "symbols": [
+    "SPCX.XNAS"
+   ]
+  },
+  {
+   "id": "cls-telegraph/2540819",
+   "source": "cls-telegraph",
+   "title": "特朗普批美联储利率太高 美联储主席陷两难",
+   "symbols": []
+  },
+  {
+   "id": "36kr-quick//newsflashes/4079229665236104",
+   "source": "36kr-quick",
+   "title": "中国通号：国内首款4.9GHz无蜂窝基站获证商用",
+   "symbols": [
+    "688009.XSHG"
+   ]
+  },
+  {
+   "id": "wallstreetcn-quick/3203671",
+   "source": "wallstreetcn-quick",
+   "title": "美国洛杉矶港口罢工威胁因达成临时协议而解除",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387722_1",
+   "source": "fastbull-news",
+   "title": "DeepSeek千亿融资落地？31家出资方现身，商业化能否撑起高估值",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387554_1",
+   "source": "fastbull-news",
+   "title": "黄仁勋出轨风波冲击英伟达：黄乐是谁？75亿美元芯片争议背后，NVDA面临多大风险？",
+   "symbols": [
+    "NVDA.XNAS"
+   ]
+  },
+  {
+   "id": "cls-telegraph/2540826",
+   "source": "cls-telegraph",
+   "title": "【电报解读】国家数据局要求积极拓展词元服务应用场景，该细分领域已成为Token消耗最集中的应用赛道，行业正式迈入Token经济元年，这家公司联合腾讯打造的项目首批已落地14个城市",
+   "symbols": [],
+   "note": "腾讯（港股）不标"
+  },
+  {
+   "id": "fastbull-news//cn/news-detail/4387508_1",
+   "source": "fastbull-news",
+   "title": "美伊外交僵局加剧，非农强劲提振美元",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203665",
+   "source": "wallstreetcn-quick",
+   "title": "伊朗称一油轮在霍尔木兹海峡以东海域起火",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261121220229387800",
+   "source": "jin10",
+   "title": "俄罗斯列宁格勒州州长：遭袭货船上的情况已得到控制，目前正采取措施，力争使其恢复航行，继续前往加里宁格勒。",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/3782813",
+   "source": "wallstreetcn-news",
+   "title": "2027见闻历，财经人的桌面必备“神历”",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387585_1",
+   "source": "fastbull-news",
+   "title": "大众利润近乎归零，德系车企的盈利压力究竟来自哪里？",
+   "symbols": [],
+   "note": "大众（德股）不标"
+  },
+  {
+   "id": "wallstreetcn-quick/3203673",
+   "source": "wallstreetcn-quick",
+   "title": "欧盟与印尼签署贸易和投资协定",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387221_1",
+   "source": "fastbull-news",
+   "title": "外汇回测同根K线碰到止损和止盈，究竟先算哪个？",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387611_1",
+   "source": "fastbull-news",
+   "title": "黄仁勋辞职：失去创始人后，英伟达的价值几何？",
+   "symbols": [
+    "NVDA.XNAS"
+   ]
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361581_212_1",
+   "source": "fastbull-express",
+   "title": "美国总统特朗普就新闻秘书一职：我有四到五名候选人。",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203667",
+   "source": "wallstreetcn-quick",
+   "title": "伊朗伊斯兰革命卫队总司令视察导弹基地",
+   "symbols": []
+  },
+  {
+   "id": "36kr-quick//newsflashes/4079212995089289",
+   "source": "36kr-quick",
+   "title": "马斯克称FSD V15下个月将全面推送",
+   "symbols": [],
+   "note": "只有马斯克与 FSD，没有点名特斯拉，不标"
+  },
+  {
+   "id": "mktnews-flash/01a1fe0d-d1ba-7bbc-ac9e-bb7c72ee2695",
+   "source": "mktnews-flash",
+   "title": "The White House plans to scale back use of “special government employee” status, which allows private-sector employees to work for the government without giving up outside pay or investments, the Wall Street Journal reported, citing people familiar with the matter.",
+   "symbols": []
+  },
+  {
+   "id": "ths/5729255",
+   "source": "ths",
+   "title": "以军袭击加沙城一辆汽车 致3死多伤",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361556_212_1",
+   "source": "fastbull-express",
+   "title": "比特币升破60000美元，日内涨2.53%。",
+   "symbols": [
+    "BTCUSDT.BINANCE"
+   ]
+  },
+  {
+   "id": "cls-telegraph/2540847",
+   "source": "cls-telegraph",
+   "title": "亚投行将在香港设立办公室",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361568_212_1",
+   "source": "fastbull-express",
+   "title": "美国中央司令部：伊朗革命卫队声称昨日击中并损坏一架美国F-16战斗机，迫使其紧急降落。此说法不实。事实是，伊朗昨日根本没有攻击美国F-16战斗机。美国在中东的所有军用战斗机均安全无恙，全部可查。",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387506_1",
+   "source": "fastbull-news",
+   "title": "欧元兑美元上涨，实际汇率为什么会下跌？用通胀数据复算",
+   "symbols": []
+  },
+  {
+   "id": "fastbull-news//cn/newsdetail/4387208_1",
+   "source": "fastbull-news",
+   "title": "外汇账户余额为正，为什么仍可能强平？看净值与保证金比例",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728835",
+   "source": "ths",
+   "title": "伊朗称击落第58架美军“死神”无人机",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-quick/3203656",
+   "source": "wallstreetcn-quick",
+   "title": "中国铜业100亿元小公募债申报获上交所受理",
+   "symbols": []
+  },
+  {
+   "id": "wallstreetcn-news/41960211",
+   "source": "wallstreetcn-news",
+   "title": "马斯克手下大将：特斯拉和SpaceX的每个零件，什么材料、多少钱，他都知道",
+   "symbols": [
+    "TSLA.XNAS",
+    "SPCX.XNAS"
+   ]
+  },
+  {
+   "id": "mktnews-flash/01a1fef9-b707-7bbc-ac9f-c34758c41761",
+   "source": "mktnews-flash",
+   "title": "NATO Secretary-General Rutte pledged in Warsaw that the alliance would defend “every inch” of Polish territory after Russian missiles and drones entered Polish airspace, calling the incident “dangerous”.",
+   "symbols": []
+  },
+  {
+   "id": "jin10/20261122004122237800",
+   "source": "jin10",
+   "title": "黎巴嫩总统：以色列占领和伊朗干预是我们实现完全独立的两大障碍。",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540821",
+   "source": "cls-telegraph",
+   "title": "青海海西州德令哈市发生5.6级地震 震源深度10千米",
+   "symbols": []
+  },
+  {
+   "id": "ths/5728867",
+   "source": "ths",
+   "title": "香港财政司司长陈茂波将率团访问英国和荷兰",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2540288",
+   "source": "cls-depth",
+   "title": "近30股今日逆势年内新高！这7只万亿巨无霸在列",
+   "symbols": []
+  },
+  {
+   "id": "cls-telegraph/2540820",
+   "source": "cls-telegraph",
+   "title": "青海海西州德令哈市附近发生5.7级左右地震",
+   "symbols": []
+  },
+  {
+   "id": "cls-depth/2539786",
+   "source": "cls-depth",
+   "title": "谷歌将绕过博通直接采购HBM 降成本需求或将压制内存厂商利润",
+   "symbols": [
+    "GOOG.XNAS",
+    "AVGO.XNAS"
+   ]
+  },
+  {
+   "id": "wallstreetcn-news/3786422",
+   "source": "wallstreetcn-news",
+   "title": "“抛售”带来“更多抛售”！高盛预测“未来一周美股将出现另一波大规模抛售”",
+   "symbols": [
+    "GS.XNYS"
+   ]
+  },
+  {
+   "id": "fastbull-express//cn/fastshort/4361604_212_1",
+   "source": "fastbull-express",
+   "title": "卡塔尔-德国声明：谴责胡塞武装在也门以及针对沙特的袭击，并呼吁该组织立即停止一切军事行动。",
+   "symbols": []
+  }
+ ]
+}

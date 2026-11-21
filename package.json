@@ -25,6 +25,9 @@
     "test": "vitest -c vitest.config.ts",
     "collector:check": "tsx ./scripts/collector-check.ts",
     "feed:check": "tsx ./scripts/feed-check.ts",
+    "enrich:backfill": "tsx ./scripts/enrich-backfill.ts",
+    "enrich:eval": "tsx ./scripts/enrich-eval.ts",
+    "enrich:dict": "cross-env NODE_OPTIONS=--use-env-proxy tsx ./scripts/gen-symbol-dict.ts",
     "sources:patrol": "tsx ./scripts/sources-patrol.ts"
   },
   "dependencies": {
@@ -47,6 +50,7 @@
     "dayjs": "1.11.13",
     "db0": "^0.3.1",
     "defu": "^6.1.5",
+    "entities": "^7.0.1",
     "fast-xml-parser": "^5.7.0",
     "framer-motion": "^12.34.3",
     "h3": "^1.15.9",

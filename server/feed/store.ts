@@ -1,6 +1,8 @@
 import type { Database, Primitive } from "db0"
 import { ITEM_SELECT, itemFromRow } from "#/collector/store"
 import type { IngestedItem } from "#/collector/store"
+import { EnrichStore } from "#/enrich/store"
+import type { GroupInfo } from "#/enrich/store"
 
 /**
  * 信息流的读取（#2186）。只读 items 表，写在 collector/store.ts。
@@ -28,14 +30,22 @@ export interface FeedFilter {
   to?: number
   /** first_seen_at ≥ since（入库时间，含端点：同一毫秒里后到的条目不会被漏掉，客户端按 seq 去重） */
   since?: number
-  /** 标题须包含每一个词（AND，不分大小写仅对 ASCII 生效：SQLite LIKE 的限制） */
+  /** 标题（原始标题或清洗后的标题）须包含每一个词（AND，不分大小写仅对 ASCII 生效：SQLite LIKE 的限制） */
   keywords: string[]
+  /**
+   * 标的（品种 id）：条目自己带其中任一个，或（默认按组时）它所在组的任一成员带，就算命中。空数组 = 不按标的限。
+   */
+  symbols: string[]
+  /** true：每条都单独出现（成员也算）；false：每组只出主条目一行（dup_of 为空的） */
+  expand: boolean
 }
 
 export interface FeedPage {
   rows: IngestedItem[]
   /** 还有更早的条目；nextCursor 由最后一条算出 */
   hasMore: boolean
+  /** 本页各条所在的组（主条目 seq → 成员与来源数） */
+  groups: Map<number, GroupInfo>
 }
 
 function rowsOf<T>(res: unknown): T[] {
@@ -77,8 +87,33 @@ function rowWhere(filter: FeedFilter) {
     params.push(JSON.stringify(filter.sourceIds))
   }
   for (const term of filter.keywords) {
-    where.push(`title LIKE ? ESCAPE '\\'`)
-    params.push(`%${escapeLike(term)}%`)
+    // 原始标题与清洗后的标题都找：实体没解码的原标题里搜不到 Trump's（&#8217;），清洗后的搜得到；反过来 Google 的来源后缀只在原标题里
+    where.push(`(title LIKE ? ESCAPE '\\' OR clean_title LIKE ? ESCAPE '\\')`)
+    params.push(`%${escapeLike(term)}%`, `%${escapeLike(term)}%`)
+  }
+  if (!filter.expand) {
+    if (filter.sourceIds) {
+      // 先按来源范围筛、再在范围里收拢：组的代表行 = 范围内 seq 最小的那条。主条目在范围里它就是代表；
+      // 不在，范围里最早的成员是代表（后到的成员 seq 只会更大，代表定下后不再变，游标稳定）。
+      where.push(`(items.dup_of IS NULL OR NOT EXISTS (
+        SELECT 1 FROM items m WHERE (m.seq = items.dup_of OR m.dup_of = items.dup_of) AND m.seq < items.seq
+          AND m.source_id IN (SELECT value FROM json_each(?))))`)
+      params.push(JSON.stringify(filter.sourceIds))
+    } else {
+      where.push(`items.dup_of IS NULL`)
+    }
+  }
+  if (filter.symbols.length) {
+    const symbols = JSON.stringify(filter.symbols)
+    const own = `SELECT seq FROM item_symbols WHERE symbol IN (SELECT value FROM json_each(?))`
+    if (filter.expand) {
+      where.push(`seq IN (${own})`)
+      params.push(symbols)
+    } else {
+      // 组里任何一条带这个标的，主条目就算命中
+      where.push(`seq IN (${own} UNION SELECT dup_of FROM items WHERE dup_of IS NOT NULL AND seq IN (${own}))`)
+      params.push(symbols, symbols)
+    }
   }
   return { where, params }
 }
@@ -96,7 +131,11 @@ const ORDER = `ORDER BY feed_ts DESC, source_id DESC, item_id DESC`
 export const SCAN_WINDOW = 2000
 
 export class FeedStore {
-  constructor(private db: Database, private scanWindow = SCAN_WINDOW) {}
+  private enrich: EnrichStore
+
+  constructor(private db: Database, private scanWindow = SCAN_WINDOW) {
+    this.enrich = new EnrichStore(db)
+  }
 
   /** 目前已分配的最大 seq，没有条目是 0。 */
   async latestSeq(): Promise<number> {
@@ -105,7 +144,7 @@ export class FeedStore {
   }
 
   async page(filter: FeedFilter, limit: number, cursor?: FeedCursor): Promise<FeedPage> {
-    if (filter.sourceIds && !filter.sourceIds.length) return { rows: [], hasMore: false }
+    if (filter.sourceIds && !filter.sourceIds.length) return { rows: [], hasMore: false, groups: new Map() }
     const range = rangeWhere(filter, cursor)
     const row = rowWhere(filter)
     const run = async (sql: string, params: Primitive[]) => rowsOf<Record<string, any>>(await this.db.prepare(sql).all(...params))
@@ -115,7 +154,7 @@ export class FeedStore {
       rows = await run(`
         SELECT ${ITEM_SELECT} FROM (
           SELECT ${ITEM_SELECT} FROM items ${clause(range.where)} ${ORDER} LIMIT ${this.scanWindow}
-        ) ${clause(row.where)} ${ORDER} LIMIT ?
+        ) AS items ${clause(row.where)} ${ORDER} LIMIT ?
       `, [...range.params, ...row.params, limit + 1])
       done = rows.length > limit
     }
@@ -124,13 +163,27 @@ export class FeedStore {
         SELECT ${ITEM_SELECT} FROM items ${clause([...range.where, ...row.where])} ${ORDER} LIMIT ?
       `, [...range.params, ...row.params, limit + 1])
     }
-    return { rows: rows.slice(0, limit).map(itemFromRow), hasMore: rows.length > limit }
+    const items = rows.slice(0, limit).map(itemFromRow)
+    await this.enrich.hydrate(items)
+    return { rows: items, hasMore: rows.length > limit, groups: await this.groupsOf(items) }
+  }
+
+  /** 这些条目所在的组（成员条目取它的主条目的组）。 */
+  async groupsOf(items: IngestedItem[]): Promise<Map<number, GroupInfo>> {
+    return this.enrich.groups(items.map(i => i.dupOf ?? i.seq))
+  }
+
+  /** 这些主条目 seq 的组（SSE 的 merge 事件要来源数）。 */
+  groups(mainSeqs: number[]): Promise<Map<number, GroupInfo>> {
+    return this.enrich.groups(mainSeqs)
   }
 
   /** seq 大于 after 的条目，按 seq 升序（SSE 补发用）。 */
   async after(seq: number, limit: number): Promise<IngestedItem[]> {
-    return rowsOf<Record<string, any>>(await this.db.prepare(`
+    const items = rowsOf<Record<string, any>>(await this.db.prepare(`
       SELECT ${ITEM_SELECT} FROM items WHERE seq > ? ORDER BY seq LIMIT ?
     `).all(seq, limit)).map(itemFromRow)
+    await this.enrich.hydrate(items)
+    return items
   }
 }

@@ -1,0 +1,888 @@
+{
+  "us": {
+    "AAPL": {
+      "en": [
+        "Apple"
+      ]
+    },
+    "MSFT": {
+      "en": [
+        "Microsoft"
+      ]
+    },
+    "GOOGL": {
+      "cn": [
+        "谷歌母公司"
+      ],
+      "en": [
+        "Alphabet",
+        "Google"
+      ]
+    },
+    "NVDA": {
+      "en": [
+        "Nvidia",
+        "NVIDIA"
+      ]
+    },
+    "AMZN": {
+      "en": [
+        "Amazon"
+      ]
+    },
+    "TSLA": {
+      "en": [
+        "Tesla"
+      ]
+    },
+    "AVGO": {
+      "en": [
+        "Broadcom"
+      ]
+    },
+    "META": {
+      "cn": [
+        "脸书"
+      ],
+      "en": [
+        "Meta",
+        "Facebook"
+      ]
+    },
+    "TSM": {
+      "cn": [
+        "台积电",
+        "台湾积体电路"
+      ],
+      "en": [
+        "TSMC"
+      ]
+    },
+    "AMD": {
+      "cn": [
+        "超威半导体",
+        "超微半导体"
+      ],
+      "en": [
+        "AMD"
+      ]
+    },
+    "NFLX": {
+      "en": [
+        "Netflix"
+      ]
+    },
+    "BABA": {
+      "en": [
+        "Alibaba"
+      ]
+    },
+    "PDD": {
+      "cn": [
+        "拼多多"
+      ],
+      "en": [
+        "Pinduoduo",
+        "PDD"
+      ]
+    },
+    "JD": {
+      "en": [
+        "JD.com"
+      ]
+    },
+    "BIDU": {
+      "en": [
+        "Baidu"
+      ]
+    },
+    "NIO": {
+      "cn": [
+        "蔚来"
+      ],
+      "en": [
+        "NIO"
+      ]
+    },
+    "XPEV": {
+      "cn": [
+        "小鹏汽车",
+        "小鹏"
+      ],
+      "en": [
+        "XPeng",
+        "Xpeng"
+      ]
+    },
+    "LI": {
+      "cn": [
+        "理想汽车"
+      ],
+      "en": [
+        "Li Auto"
+      ]
+    },
+    "TME": {
+      "cn": [
+        "腾讯音乐"
+      ]
+    },
+    "BILI": {
+      "cn": [
+        "哔哩哔哩",
+        "B站"
+      ],
+      "en": [
+        "Bilibili"
+      ]
+    },
+    "ZTO": {
+      "cn": [
+        "中通快递"
+      ]
+    },
+    "TAL": {
+      "cn": [
+        "好未来"
+      ]
+    },
+    "EDU": {
+      "cn": [
+        "新东方"
+      ]
+    },
+    "YUMC": {
+      "cn": [
+        "百胜中国"
+      ]
+    },
+    "MSTR": {
+      "cn": [
+        "微策略"
+      ],
+      "en": [
+        "MicroStrategy"
+      ]
+    },
+    "COIN": {
+      "en": [
+        "Coinbase"
+      ]
+    },
+    "HOOD": {
+      "en": [
+        "Robinhood"
+      ]
+    },
+    "PLTR": {
+      "en": [
+        "Palantir"
+      ]
+    },
+    "SMCI": {
+      "cn": [
+        "超微电脑"
+      ],
+      "en": [
+        "Supermicro"
+      ]
+    },
+    "MU": {
+      "cn": [
+        "美光"
+      ],
+      "en": [
+        "Micron"
+      ]
+    },
+    "INTC": {
+      "en": [
+        "Intel"
+      ]
+    },
+    "QCOM": {
+      "en": [
+        "Qualcomm"
+      ]
+    },
+    "ORCL": {
+      "en": [
+        "Oracle"
+      ]
+    },
+    "CRM": {
+      "en": [
+        "Salesforce"
+      ]
+    },
+    "ADBE": {
+      "en": [
+        "Adobe"
+      ]
+    },
+    "CSCO": {
+      "cn": [
+        "思科"
+      ],
+      "en": [
+        "Cisco"
+      ]
+    },
+    "IBM": {
+      "cn": [
+        "IBM"
+      ],
+      "en": [
+        "IBM"
+      ]
+    },
+    "DELL": {
+      "en": [
+        "Dell"
+      ]
+    },
+    "HPQ": {
+      "cn": [
+        "惠普"
+      ]
+    },
+    "ASML": {
+      "en": [
+        "ASML"
+      ]
+    },
+    "JPM": {
+      "en": [
+        "JPMorgan"
+      ],
+      "cn": [
+        "小摩"
+      ]
+    },
+    "C": {
+      "en": [
+        "Citigroup",
+        "Citi"
+      ]
+    },
+    "BRK.B": {
+      "cn": [
+        "伯克希尔"
+      ]
+    },
+    "V": {
+      "cn": [
+        "维萨"
+      ]
+    },
+    "MA": {
+      "cn": [
+        "万事达"
+      ],
+      "en": [
+        "Mastercard"
+      ]
+    },
+    "PYPL": {
+      "en": [
+        "PayPal"
+      ]
+    },
+    "DIS": {
+      "cn": [
+        "迪士尼"
+      ],
+      "en": [
+        "Disney"
+      ]
+    },
+    "NKE": {
+      "en": [
+        "Nike"
+      ]
+    },
+    "SBUX": {
+      "en": [
+        "Starbucks"
+      ]
+    },
+    "MCD": {
+      "en": [
+        "McDonald's"
+      ]
+    },
+    "KO": {
+      "en": [
+        "Coca-Cola"
+      ]
+    },
+    "WMT": {
+      "en": [
+        "Walmart"
+      ]
+    },
+    "COST": {
+      "cn": [
+        "好市多"
+      ],
+      "en": [
+        "Costco"
+      ]
+    },
+    "PFE": {
+      "en": [
+        "Pfizer"
+      ]
+    },
+    "MRNA": {
+      "cn": [
+        "莫德纳"
+      ],
+      "en": [
+        "Moderna"
+      ]
+    },
+    "NVO": {
+      "en": [
+        "Novo Nordisk"
+      ]
+    },
+    "UNH": {
+      "cn": [
+        "联合健康"
+      ],
+      "en": [
+        "UnitedHealth"
+      ]
+    },
+    "GE": {
+      "cn": [
+        "通用电气"
+      ]
+    },
+    "UBER": {
+      "cn": [
+        "优步"
+      ],
+      "en": [
+        "Uber"
+      ]
+    },
+    "ABNB": {
+      "en": [
+        "Airbnb"
+      ]
+    },
+    "SPOT": {
+      "en": [
+        "Spotify"
+      ]
+    },
+    "SHOP": {
+      "en": [
+        "Shopify"
+      ]
+    },
+    "SNOW": {
+      "en": [
+        "Snowflake"
+      ]
+    },
+    "NET": {
+      "en": [
+        "Cloudflare"
+      ]
+    },
+    "CRWD": {
+      "en": [
+        "CrowdStrike"
+      ]
+    },
+    "NOW": {
+      "en": [
+        "ServiceNow"
+      ]
+    },
+    "SPCX": {
+      "en": [
+        "SpaceX"
+      ]
+    },
+    "ANT": {
+      "en": [
+        "Anthropic"
+      ]
+    },
+    "BA": {
+      "en": [
+        "Boeing"
+      ]
+    },
+    "LMT": {
+      "en": [
+        "Lockheed Martin"
+      ]
+    },
+    "GS": {
+      "en": [
+        "Goldman Sachs"
+      ]
+    },
+    "RIVN": {
+      "en": [
+        "Rivian"
+      ]
+    },
+    "XOM": {
+      "en": [
+        "Exxon Mobil",
+        "ExxonMobil"
+      ]
+    },
+    "CVX": {
+      "en": [
+        "Chevron"
+      ]
+    },
+    "LLY": {
+      "en": [
+        "Eli Lilly"
+      ]
+    },
+    "AXP": {
+      "en": [
+        "American Express"
+      ]
+    },
+    "DASH": {
+      "en": [
+        "DoorDash"
+      ]
+    },
+    "CVNA": {
+      "en": [
+        "Carvana"
+      ]
+    },
+    "AFRM": {
+      "en": [
+        "Affirm"
+      ]
+    },
+    "SOFI": {
+      "en": [
+        "SoFi"
+      ]
+    },
+    "CRCL": {
+      "en": [
+        "Circle"
+      ]
+    },
+    "BMNR": {
+      "en": [
+        "BitMine"
+      ]
+    },
+    "UPST": {
+      "en": [
+        "Upstart"
+      ]
+    },
+    "APP": {
+      "en": [
+        "AppLovin"
+      ]
+    },
+    "ARM": {
+      "en": [
+        "Arm Holdings"
+      ]
+    },
+    "SONY": {
+      "en": [
+        "Sony"
+      ]
+    },
+    "TM": {
+      "en": [
+        "Toyota"
+      ]
+    },
+    "SAP": {
+      "en": [
+        "SAP"
+      ]
+    },
+    "ROKU": {
+      "en": [
+        "Roku"
+      ]
+    },
+    "RBLX": {
+      "en": [
+        "Roblox"
+      ]
+    },
+    "MS": {
+      "cn": [
+        "大摩"
+      ]
+    },
+    "BAC": {
+      "cn": [
+        "美银"
+      ]
+    }
+  },
+  "crypto": {
+    "BTC": {
+      "cn": [
+        "比特币"
+      ],
+      "en": [
+        "Bitcoin"
+      ]
+    },
+    "ETH": {
+      "cn": [
+        "以太坊",
+        "以太币"
+      ],
+      "en": [
+        "Ethereum",
+        "Ether"
+      ]
+    },
+    "BNB": {
+      "cn": [
+        "币安币"
+      ]
+    },
+    "XRP": {
+      "cn": [
+        "瑞波币"
+      ],
+      "en": [
+        "Ripple"
+      ]
+    },
+    "SOL": {
+      "cn": [
+        "索拉纳"
+      ],
+      "en": [
+        "Solana"
+      ]
+    },
+    "TRX": {
+      "cn": [
+        "波场"
+      ]
+    },
+    "DOGE": {
+      "cn": [
+        "狗狗币"
+      ],
+      "en": [
+        "Dogecoin"
+      ]
+    },
+    "ADA": {
+      "cn": [
+        "艾达币",
+        "卡尔达诺"
+      ],
+      "en": [
+        "Cardano"
+      ]
+    },
+    "LINK": {
+      "en": [
+        "Chainlink"
+      ]
+    },
+    "XLM": {
+      "cn": [
+        "恒星币"
+      ]
+    },
+    "BCH": {
+      "cn": [
+        "比特币现金"
+      ],
+      "en": [
+        "Bitcoin Cash"
+      ]
+    },
+    "LTC": {
+      "cn": [
+        "莱特币"
+      ],
+      "en": [
+        "Litecoin"
+      ]
+    },
+    "DOT": {
+      "cn": [
+        "波卡币"
+      ],
+      "en": [
+        "Polkadot"
+      ]
+    },
+    "ZEC": {
+      "cn": [
+        "大零币"
+      ],
+      "en": [
+        "Zcash"
+      ]
+    },
+    "SHIB": {
+      "cn": [
+        "柴犬币"
+      ],
+      "en": [
+        "Shiba Inu"
+      ]
+    },
+    "HYPE": {
+      "en": [
+        "Hyperliquid"
+      ]
+    },
+    "UNI": {
+      "en": [
+        "Uniswap"
+      ]
+    },
+    "AAVE": {
+      "en": [
+        "Aave"
+      ]
+    },
+    "AVAX": {
+      "cn": [
+        "雪崩协议"
+      ]
+    },
+    "ETC": {
+      "cn": [
+        "以太经典"
+      ],
+      "en": [
+        "Ethereum Classic"
+      ]
+    }
+  },
+  "ashare": {
+    "600519": [
+      "茅台"
+    ],
+    "300750": [
+      "宁王"
+    ],
+    "601398": [
+      "工行"
+    ],
+    "601939": [
+      "建行"
+    ],
+    "601288": [
+      "农行"
+    ],
+    "601988": [
+      "中行"
+    ],
+    "600036": [
+      "招行"
+    ],
+    "601328": [
+      "交行"
+    ],
+    "601857": [
+      "中石油"
+    ],
+    "600028": [
+      "中石化"
+    ]
+  },
+  "stop": {
+    "cn": [
+      "新闻",
+      "新闻集团",
+      "工作日",
+      "地缘",
+      "坚果",
+      "旗帜",
+      "皇冠",
+      "看准",
+      "快扣",
+      "金沙",
+      "广达",
+      "华美",
+      "洛斯",
+      "惠好",
+      "嘉年华",
+      "福斯",
+      "现在服务",
+      "人民网",
+      "新华网",
+      "通用",
+      "理想",
+      "标准",
+      "发展",
+      "动力",
+      "创意",
+      "高科",
+      "美丽",
+      "如意",
+      "春天",
+      "田野",
+      "开元",
+      "洲际",
+      "国中",
+      "同德",
+      "百利",
+      "百灵",
+      "天际",
+      "新元",
+      "起步",
+      "明德",
+      "明诚",
+      "实达",
+      "数源",
+      "易录",
+      "网达",
+      "美克",
+      "凯利",
+      "太平洋",
+      "驱动力"
+    ],
+    "en": [
+      "strategy",
+      "target",
+      "block",
+      "visa",
+      "ford",
+      "gap",
+      "snap",
+      "meta platforms"
+    ],
+    "macro": [
+      "AI",
+      "CPI",
+      "PPI",
+      "PMI",
+      "GDP",
+      "ETF",
+      "IPO",
+      "CEO",
+      "CFO",
+      "COO",
+      "CTO",
+      "SEC",
+      "FED",
+      "EPS",
+      "USD",
+      "EUR",
+      "JPY",
+      "CNY",
+      "GBP",
+      "OPEC",
+      "NATO",
+      "FOMC",
+      "ECB",
+      "IMF",
+      "WTO",
+      "API",
+      "EIA",
+      "ADP",
+      "ISM",
+      "NFP",
+      "LNG",
+      "OTC",
+      "SPAC",
+      "PCE",
+      "FDA",
+      "FAQ",
+      "IT",
+      "ON",
+      "ALL",
+      "US",
+      "UK",
+      "EU",
+      "UN",
+      "AM",
+      "PM",
+      "TV",
+      "PC",
+      "VR",
+      "AR",
+      "EV",
+      "OS",
+      "ID",
+      "PR",
+      "HR"
+    ],
+    "cryptoBare": [
+      "NEAR",
+      "SKY",
+      "NIGHT",
+      "PUMP",
+      "HYPE",
+      "GRAM",
+      "JUST",
+      "JST",
+      "POL",
+      "ARB",
+      "ENA",
+      "TAO",
+      "UNI",
+      "LINK",
+      "DOT",
+      "SUI",
+      "ONDO",
+      "QNT",
+      "USD",
+      "USDT",
+      "USDC",
+      "ALL",
+      "FOR",
+      "DOGE"
+    ],
+    "ctx": [
+      "万年青",
+      "东方明珠",
+      "中关村",
+      "会稽山",
+      "农产品",
+      "北大荒",
+      "向日葵",
+      "外高桥",
+      "大西洋",
+      "天津港",
+      "太阳能",
+      "张家界",
+      "徐家汇",
+      "指南针",
+      "新世界",
+      "新大陆",
+      "新天地",
+      "机器人",
+      "步步高",
+      "王府井",
+      "白云山",
+      "白云机场",
+      "红太阳",
+      "老百姓",
+      "连云港",
+      "鄂尔多斯",
+      "长白山",
+      "陆家嘴",
+      "青岛港",
+      "黑芝麻"
+    ]
+  }
+}

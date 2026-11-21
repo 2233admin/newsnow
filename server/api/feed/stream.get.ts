@@ -7,7 +7,7 @@ import { InputError } from "#/registry/spec"
 
 /**
  * 实时推送（SSE）。事件与重连规则见 server/feed/stream.ts 的文件头。
- * 筛选参数同 GET /api/feed 里对实时流有意义的：source、category、q、symbol、includeInactive。
+ * 筛选参数同 GET /api/feed 里对实时流有意义的：source、category、q、symbol、includeInactive、expand。
  * Last-Event-ID：请求头（EventSource 重连时自动带），或 ?lastEventId=（首次连接，用 GET /api/feed 响应里的 latestSeq）。
  * 不给就只推连上之后入库的新条目。只给本机；浏览器 EventSource 不能带 Authorization，用 USER_SOURCES_TOKEN 的调用方请用 fetch 读流。
  */
