@@ -4,8 +4,8 @@
  *
  *   pnpm sources:patrol                          # JSON 报告
  *   pnpm sources:patrol --format text            # 给人看的表
- *   pnpm sources:patrol --open-issues            # 给每个坏掉的源在 XartLab/KATANAview 开 issue（已有同名未关闭的跳过）
- *   pnpm sources:patrol --open-issues --dry-run  # 只查重、只打印会开什么，不创建
+ *   pnpm sources:patrol --open-issues            # 给每个坏掉的源在 XartLab/KATANAview 开 issue（已有未关闭的同源 issue 跳过；只有已关闭的就重开最近那张并追加评论）
+ *   pnpm sources:patrol --open-issues --dry-run  # 只查重、只打印会开 / 重开什么，不改任何东西
  *   选项：--db <路径>（默认 .data/db.sqlite3）、--repo <owner/repo>、--label <标签>（默认 area:news）、
  *        --min-failures <n>、--min-minutes <n>、--stalled-minutes <n>
  *

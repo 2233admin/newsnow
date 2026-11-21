@@ -174,7 +174,7 @@ export type RunGh = (args: string[]) => Promise<string>
 export interface IssueAction {
   sourceId: string
   title: string
-  action: "created" | "exists" | "would-create"
+  action: "created" | "exists" | "reopened" | "would-create" | "would-reopen"
   number?: number
   url?: string
   labeled: boolean
@@ -187,24 +187,44 @@ export interface OpenIssuesOptions {
   runGh: RunGh
 }
 
-interface OpenIssue {
+interface IssueRef {
   number: number
   title: string
   html_url?: string
+  state?: string
+  closed_at?: string | null
+}
+
+/** 重开时追加的评论：本次失败次数、最近错误、时间。 */
+export function reopenComment(f: FailingSource, report: Pick<PatrolReport, "generatedAtIso" | "thresholds">) {
+  const time = (ms: number | null) => ms === null ? "从未成功" : new Date(ms).toISOString()
+  return [
+    `每日巡检（${report.generatedAtIso}）发现 \`${f.sourceId}\` 再次连续失败，重新打开。`,
+    "",
+    `- 本次连续失败：${f.consecutiveFailures} 次（采集间隔 ${f.intervalMinutes} 分钟）`,
+    `- 最近一次成功：${time(f.lastSuccessAt)}${f.minutesSinceLastSuccess === null ? "" : `（${f.minutesSinceLastSuccess} 分钟前）`}`,
+    `- 最近一次失败：${time(f.lastErrorAt)}`,
+    `- 最近的错误：\`${(f.lastError ?? "无").replace(/`/g, "'").slice(0, 300)}\``,
+    "",
+    `判定阈值（待定）：连续失败 >= ${report.thresholds.minFailures} 次，且距最近成功 >= ${report.thresholds.minFailingMinutes} 分钟。`,
+  ].join("\n")
 }
 
 /**
- * 给 failing 里的每个源开一张 issue，已有同名未关闭 issue 的跳过。
- * 只走 `gh api` 的 REST 路径（不用 `gh issue ...`，它走 GraphQL，在受限环境里被拒）。
+ * 给 failing 里的每个源处理一张 issue：
+ * - 已有未关闭的同源 issue：不动；
+ * - 没有未关闭的、但有已关闭的同源 issue：重新打开最近关闭的那张并追加一条评论，不新开；
+ * - 都没有：新建。
+ * 同源 = 标题以 `[信源巡检] <源 id> ` 开头。只走 `gh api` 的 REST 路径（不用 `gh issue ...`，它走 GraphQL，在受限环境里被拒）。
  * 标签不存在就不加（GitHub 对不存在的标签会自动创建，那会悄悄建出一个没人规划的标签），在返回里标 labeled: false。
  */
 export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions): Promise<{ actions: IssueAction[], labelMissing: boolean }> {
   const { repo, label, dryRun, runGh } = opts
   if (!report.failing.length) return { actions: [], labelMissing: false }
 
-  // 未关闭的 issue（REST 的 /issues 也会返回 PR，用 pull_request 字段滤掉）
-  const raw = await runGh(["api", "--paginate", `repos/${repo}/issues?state=open&per_page=100`, "--jq", ".[] | select(.pull_request | not) | {number, title, html_url}"])
-  const open: OpenIssue[] = raw.split("\n").map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l))
+  // 开着的与关了的都要看（REST 的 /issues 也会返回 PR，用 pull_request 字段滤掉）
+  const raw = await runGh(["api", "--paginate", `repos/${repo}/issues?state=all&per_page=100`, "--jq", ".[] | select(.pull_request | not) | {number, title, html_url, state, closed_at}"])
+  const all: IssueRef[] = raw.split("\n").map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l))
 
   let labelMissing = false
   try {
@@ -216,9 +236,23 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
   const actions: IssueAction[] = []
   for (const f of report.failing) {
     const title = issueTitle(f)
-    const existing = open.find(i => i.title.startsWith(issueTitlePrefix(f.sourceId)))
+    const same = all.filter(i => i.title.startsWith(issueTitlePrefix(f.sourceId)))
+    const existing = same.find(i => i.state === "open")
     if (existing) {
       actions.push({ sourceId: f.sourceId, title: existing.title, action: "exists", number: existing.number, url: existing.html_url, labeled: false })
+      continue
+    }
+    // 最近关闭的：closed_at 最晚的；时间相同取编号大的
+    const closed = same.filter(i => i.state === "closed")
+      .sort((a, b) => Date.parse(b.closed_at ?? "") - Date.parse(a.closed_at ?? "") || b.number - a.number)[0]
+    if (closed) {
+      if (dryRun) {
+        actions.push({ sourceId: f.sourceId, title: closed.title, action: "would-reopen", number: closed.number, url: closed.html_url, labeled: false })
+        continue
+      }
+      await runGh(["api", "-X", "PATCH", `repos/${repo}/issues/${closed.number}`, "-f", "state=open"])
+      await runGh(["api", `repos/${repo}/issues/${closed.number}/comments`, "-f", `body=${reopenComment(f, report)}`])
+      actions.push({ sourceId: f.sourceId, title: closed.title, action: "reopened", number: closed.number, url: closed.html_url, labeled: false })
       continue
     }
     if (dryRun) {
@@ -227,7 +261,7 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
     }
     const args = ["api", `repos/${repo}/issues`, "-f", `title=${title}`, "-f", `body=${issueBody(f, report)}`]
     if (!labelMissing) args.push("-f", `labels[]=${label}`)
-    const created: OpenIssue = JSON.parse(await runGh(args))
+    const created: IssueRef = JSON.parse(await runGh(args))
     actions.push({ sourceId: f.sourceId, title, action: "created", number: created.number, url: created.html_url, labeled: !labelMissing })
   }
   return { actions, labelMissing }

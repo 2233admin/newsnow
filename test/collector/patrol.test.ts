@@ -117,7 +117,7 @@ describe("openIssues（假的 gh）", () => {
     })
     return buildPatrolReport(health, { good: sources.good, down: sources.down }, NOW)
   }
-  function fakeGh(opts: { open?: { number: number, title: string }[], labelExists?: boolean } = {}) {
+  function fakeGh(opts: { open?: { number: number, title: string, state?: "open" | "closed", closed_at?: string }[], labelExists?: boolean } = {}) {
     const calls: string[][] = []
     const runGh: RunGh = async (args) => {
       calls.push(args)
@@ -125,10 +125,16 @@ describe("openIssues（假的 gh）", () => {
         if (opts.labelExists === false) throw new Error("gh: Not Found (HTTP 404)")
         return ""
       }
-      if (args.includes("--paginate")) return (opts.open ?? []).map(i => JSON.stringify({ ...i, html_url: `https://github.com/XartLab/KATANAview/issues/${i.number}` })).join("\n")
+      if (args.includes("--paginate")) return (opts.open ?? []).map(i => JSON.stringify({ state: "open", ...i, html_url: `https://github.com/XartLab/KATANAview/issues/${i.number}` })).join("\n")
       return JSON.stringify({ number: 3001, html_url: "https://github.com/XartLab/KATANAview/issues/3001" })
     }
-    return { runGh, calls, creates: () => calls.filter(c => c[1] === "repos/XartLab/KATANAview/issues" && c.includes("-f")) }
+    return {
+      runGh,
+      calls,
+      creates: () => calls.filter(c => c[1] === "repos/XartLab/KATANAview/issues" && c.includes("-f")),
+      reopens: () => calls.filter(c => c.includes("PATCH")),
+      comments: () => calls.filter(c => c[1].endsWith("/comments")),
+    }
   }
   const base = { repo: "XartLab/KATANAview", label: "area:news" }
 
@@ -151,6 +157,43 @@ describe("openIssues（假的 gh）", () => {
     const other = fakeGh({ open: [{ number: 13, title: `${ISSUE_TITLE_PREFIX} downstream 别的源 连续失败` }] })
     const r2 = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: other.runGh })
     expect(r2.actions.map(a => a.action)).toEqual(["created"])
+  })
+
+  it("只有已关闭的同源 issue：重开最近关闭的那张并追加评论（失败次数、错误、时间），不新开", async () => {
+    const gh = fakeGh({ open: [
+      { number: 7, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败`, state: "closed", closed_at: "2026-11-01T00:00:00Z" },
+      { number: 9, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败`, state: "closed", closed_at: "2026-11-15T00:00:00Z" },
+      { number: 8, title: `${ISSUE_TITLE_PREFIX} downstream 别的源 连续失败`, state: "closed", closed_at: "2026-11-20T00:00:00Z" },
+    ] })
+    const { actions } = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })
+    expect(actions.map(a => [a.action, a.number])).toEqual([["reopened", 9]])
+    expect(gh.creates()).toEqual([])
+    expect(gh.reopens()).toEqual([["api", "-X", "PATCH", "repos/XartLab/KATANAview/issues/9", "-f", "state=open"]])
+    const [comment] = gh.comments()
+    expect(comment[1]).toBe("repos/XartLab/KATANAview/issues/9/comments")
+    const body = comment.find(a => a.startsWith("body="))!
+    expect(body).toContain("本次连续失败：90 次")
+    expect(body).toContain("503")
+    expect(body).toContain("2026-11-21T15:00:00.000Z")
+  })
+
+  it("同一个源既有未关闭的又有已关闭的：只认未关闭的，不重开", async () => {
+    const gh = fakeGh({ open: [
+      { number: 5, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败`, state: "closed", closed_at: "2026-11-01T00:00:00Z" },
+      { number: 6, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败` },
+    ] })
+    const { actions } = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })
+    expect(actions.map(a => [a.action, a.number])).toEqual([["exists", 6]])
+    expect(gh.reopens()).toEqual([])
+    expect(gh.comments()).toEqual([])
+  })
+
+  it("--dry-run 遇到已关闭的同源 issue：只说会重开，不改任何东西", async () => {
+    const gh = fakeGh({ open: [{ number: 9, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败`, state: "closed", closed_at: "2026-11-15T00:00:00Z" }] })
+    const { actions } = await openIssues(await failingReport(), { ...base, dryRun: true, runGh: gh.runGh })
+    expect(actions.map(a => [a.action, a.number])).toEqual([["would-reopen", 9]])
+    expect(gh.reopens()).toEqual([])
+    expect(gh.comments()).toEqual([])
   })
 
   it("标签不存在：照样创建但不加标签，并报告 labelMissing", async () => {
