@@ -25,6 +25,8 @@
     "test": "vitest -c vitest.config.ts",
     "collector:check": "tsx ./scripts/collector-check.ts",
     "feed:check": "tsx ./scripts/feed-check.ts",
+    "enrich:eval": "tsx ./scripts/enrich-eval.ts",
+    "enrich:dict": "cross-env NODE_OPTIONS=--use-env-proxy tsx ./scripts/gen-symbol-dict.ts",
     "sources:patrol": "tsx ./scripts/sources-patrol.ts"
   },
   "dependencies": {
