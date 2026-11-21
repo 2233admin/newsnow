@@ -108,7 +108,7 @@ describe("条目链接只留 http/https（出口统一过滤，丢弃整条）",
   const evil = ["javascript:alert(1)", "JavaScript:alert(1)", " javascript:alert(1)", "data:text/html,<script>1</script>", "vbscript:x", "file:///etc/passwd", "blob:https://a.example/x"]
 
   it("rss：link 不是 http/https 的条目被丢弃，相对链接按订阅地址补全", async () => {
-    const xml = (links: string[]) => `<rss version="2.0"><channel><title>t</title>${links.map((l, i) => `<item><title>T${i}</title><link>${l}</link></item>`).join("")}</channel></rss>`
+    const xml = (links: string[]) => `<rss version="2.0"><channel><title>t</title>${links.map((l, i) => `<item><title>T${i}</title><link>${l.replace(/</g, "&lt;")}</link></item>`).join("")}</channel></rss>`
     const items = await buildGetter({ kind: "rss", url: "https://f.example/dir/feed.xml" }, async () => xml([...evil, "/rel/1", "https://ok.example/2"]))()
     expect(items.map(i => i.url)).toEqual(["https://f.example/rel/1", "https://ok.example/2"])
     expect(items.map(i => i.id)).toEqual(["https://f.example/rel/1", "https://ok.example/2"])
@@ -132,5 +132,28 @@ describe("条目链接只留 http/https（出口统一过滤，丢弃整条）",
   it("rsshub：条目 url 同样过滤", async () => {
     const { sanitizeItems } = await import("#/registry/adapters")
     expect(sanitizeItems([{ id: "1", title: "a", url: "javascript:x" }, { id: "2", title: "b", url: "https://ok.example/" }], "https://hub.example/").map(i => i.id)).toEqual(["2"])
+  })
+
+  it("没有链接的条目保留，url 为空；id 用原 id，没有就用标题（快讯页的主要用法）", async () => {
+    const html = `<ul><li><b class="t">快讯一</b><i class="id">n1</i></li><li><b class="t">快讯二</b></li></ul>`
+    const spec = { kind: "rule", url: "https://s.example/flash", item: "li", fields: { title: "b.t", url: "a@href", id: "i.id" } } as const
+    const first = await buildGetter(spec, async () => html)()
+    expect(first).toEqual([
+      { id: "n1", title: "快讯一", url: "", pubDate: undefined },
+      { id: "快讯二", title: "快讯二", url: "", pubDate: undefined },
+    ])
+    expect((await buildGetter(spec, async () => html)()).map(i => i.id)).toEqual(first.map(i => i.id)) // id 稳定
+
+    const json = await buildGetter({ kind: "json", url: "https://a.example/x", itemsPath: "", fields: { title: "t", url: "u" } }, async () => JSON.stringify([{ t: "无链接" }, { t: "有", u: "https://ok.example/1" }, { t: "坏", u: "javascript:x" }]))()
+    expect(json.map(i => [i.id, i.url])).toEqual([["无链接", ""], ["https://ok.example/1", "https://ok.example/1"]])
+
+    const rss = await buildGetter({ kind: "rss", url: "https://f.example/feed" }, async () => `<rss version="2.0"><channel><title>t</title><item><title>无链接条目</title></item></channel></rss>`)()
+    expect(rss).toMatchObject([{ id: "无链接条目", title: "无链接条目", url: "" }])
+  })
+
+  it("preview 路径：整页都没有链接的 rule 源能解析出条目，不再 422", async () => {
+    const { runPreview } = await import("#/registry/detect")
+    const r = await runPreview({ kind: "rule", url: "https://s.example/", item: "li", fields: { title: "b", url: "a@href" } }, async () => "<ul><li><b>甲</b></li><li><b>乙</b></li></ul>", "n")
+    expect(r.items.map(i => i.title)).toEqual(["甲", "乙"])
   })
 })

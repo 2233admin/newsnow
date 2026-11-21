@@ -107,16 +107,22 @@ export function mapRule(html: string, spec: RuleSpec): NewsItem[] {
 }
 
 /**
- * 用户源出口的统一过滤（四种 kind 都经过）：条目链接只留 http / https，相对链接按 base 补全；
- * 其余 scheme（javascript:、data:、file:、vbscript:、blob: …）或没有链接的条目**整条丢弃**，而不是只清空 url：
- * rss 与 json / rule 都会拿链接兜底当 id，只清 url 会让坏链接以 id 的形式进库。
+ * 用户源出口的统一过滤（四种 kind 都经过）：
+ * - 有链接的：按 base 补全后只留 http / https；其余 scheme（javascript:、data:、file:、vbscript:、blob: …）**整条丢弃**，
+ *   而不是只清空 url：链接会兜底当 id，只清 url 会让坏链接以 id 的形式进库。
+ * - 没有链接的：保留，url 置空（每条都不带链接的快讯页是 rule / json 的主要用法）；id 用原 id，没有就用标题，
+ *   与过滤前的回退顺序一致，同一条快讯跨轮 id 稳定。
  * 内容由第三方站点控制，而新闻面板会把 url 渲染成可点的链接。KATANAview 渲染端另有一道（跟进票）。
  */
 export function sanitizeItems(items: NewsItem[], base: string): NewsItem[] {
   const out: NewsItem[] = []
   for (const item of items) {
     const raw = typeof item?.url === "string" ? item.url : ""
-    if (!raw.trim()) continue
+    if (!raw.trim()) {
+      const id = item.id === undefined || item.id === null || item.id === "" ? item.title : item.id
+      out.push({ ...item, url: "", id })
+      continue
+    }
     let parsed: URL
     try {
       parsed = new URL(raw, base)
