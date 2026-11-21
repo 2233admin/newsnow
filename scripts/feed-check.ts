@@ -103,7 +103,7 @@ if (dbPath) {
 }
 
 // 2. 首屏延迟
-async function measure(label: string, path: string) {
+async function measure(label: string, path: string, limitMs = maxMs) {
   const times: number[] = []
   await get(path) // 预热：第一次要建连接、编译语句
   for (let i = 0; i < runs; i++) {
@@ -115,12 +115,16 @@ async function measure(label: string, path: string) {
   const q = (p: number) => times[Math.min(times.length - 1, Math.floor(times.length * p))]
   const p95 = q(0.95)
   console.log(`${label.padEnd(28)} p50 ${q(0.5).toFixed(1)} ms  p95 ${p95.toFixed(1)} ms  max ${times.at(-1)!.toFixed(1)} ms  （${runs} 次）`)
-  if (p95 > maxMs) fail(`${label} p95 ${p95.toFixed(1)} ms 超过 ${maxMs} ms`)
+  if (p95 > limitMs) fail(`${label} p95 ${p95.toFixed(1)} ms 超过 ${limitMs} ms`)
 }
 await measure("首屏（默认 50 条）", "/api/feed")
 await measure("首屏（200 条）", "/api/feed?limit=200")
 await measure("按来源", "/api/feed?source=jin10")
 await measure("按关键词", `/api/feed?q=${encodeURIComponent("黄金")}`)
+// 标的查询的上限 30 ms：#9 审阅在 30 万行库上量，索引写法 p95 3–12 ms，COALESCE 写法 48–115 ms（小库上看不出退化，大库才有意义）
+await measure("按标的（NVDA）", "/api/feed?symbol=NVDA.XNAS", 30)
+await measure("按标的（不存在）", "/api/feed?symbol=NONE.XNAS", 30)
+await measure("按标的 + 来源", "/api/feed?symbol=NVDA.XNAS&source=jin10", 30)
 await measure("按分类 + 时间范围", `/api/feed?category=finance&from=${Date.now() - 86_400_000}`)
 
 process.exit(failed ? 1 : 0)

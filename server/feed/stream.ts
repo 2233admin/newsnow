@@ -43,7 +43,7 @@ export type StreamEvent =
 
 export interface StreamDeps {
   store: Pick<ObservationStore, "onIngest">
-  feed: Pick<FeedStore, "latestSeq" | "after" | "groups" | "earlierInScope" | "groupHasSymbol">
+  feed: Pick<FeedStore, "latestSeq" | "after" | "groups" | "earlierInScope" | "groupHasSymbol" | "representative">
   describe: () => Promise<SourceDescriptor[]>
 }
 
@@ -77,8 +77,20 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
         if (closed || item.seq <= lastSent) continue
         lastSent = item.seq
         if (!match(item)) continue
-        if (!params.expand && params.symbol.length && !await deps.feed.groupHasSymbol(item.dupOf ?? item.seq, params.symbol)) continue
-        const group = groups.get(item.dupOf ?? item.seq)
+        const groupId = item.dupOf ?? item.seq
+        if (!params.expand && params.symbol.length) {
+          if (!await deps.feed.groupHasSymbol(groupId, params.symbol)) continue
+          // 这一组到这条才第一次命中标的（之前没有任何成员带）：客户端还没有这一组的行，推订阅范围里的代表行（与 GET /api/feed 一致），
+          // 不是 merge——代表行可能是更早、自己不带标的的那条
+          if (item.symbols.some(s => params.symbol.includes(s)) && !await deps.feed.groupHasSymbol(groupId, params.symbol, item.seq)) {
+            const rep = await deps.feed.representative(groupId, { sourceIds: scope, keywords: params.keywords })
+            if (rep) {
+              emit({ type: "item", item: toView(rep, byId, groups.get(groupId), params.expand) })
+              continue
+            }
+          }
+        }
+        const group = groups.get(groupId)
         // 默认模式的代表行规则与 GET /api/feed 一致：订阅范围里组的第一条（seq 最小）是代表，推 item；
         // 范围（来源 / 分类 / 停用 / 关键词）里已经有更早的条目（客户端见过它）才推 merge。范围外的主条目不算，所以按来源订阅不会收到指向没见过的行的 merge。
         const earlier = item.dupOf !== null && !params.expand

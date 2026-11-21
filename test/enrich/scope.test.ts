@@ -190,3 +190,19 @@ describe("标的按组判断（默认每组一行）", () => {
     handle.close()
   })
 })
+
+describe("标的后到：组的第一条不带标的、后到成员带了标的（#9 复审跟进）", () => {
+  it("按标的订阅的 SSE 把该组的代表行当新行推 item（与 HTTP 一致），不推指向没见过的行的 merge", async () => {
+    const w = await feedWorld(DESCS(), { enrich: true })
+    const events: StreamEvent[] = []
+    const handle = openFeedStream({ store: w.store, feed: w.feedStore, describe: async () => w.state.descs }, normalizeFeedParams({ symbol: "NVDA.XNAS" }), undefined, e => events.push(e))
+    await handle.ready
+    await ingest(w, "cls-telegraph", [row("c1", { title: "以军袭击加沙城一辆汽车，致3死多伤，医院证实了", url: "https://news.example.com/g/1" })], T0)
+    await ingest(w, "ths", [row("t1", { title: "英伟达宣布：以军袭击加沙城一辆汽车，致3死多伤", url: "https://news.example.com/g/1?utm_source=t" })], T0 + 1000)
+    await ingest(w, "wallstreetcn-quick", [row("w1", { title: "以军袭击加沙城一辆汽车，致3死多伤，医院证实了", url: "https://news.example.com/g/1?utm_source=w" })], T0 + 2000)
+    await vi.waitFor(() => expect(events.length).toBe(3))
+    expect(events.slice(1).map(e => e.type === "item" ? ["item", e.item.itemId] : e.type === "merge" ? ["merge", e.seq, e.groupId] : [e.type])).toEqual([["item", "c1"], ["merge", 3, 1]])
+    expect((await w.service.query({ symbol: "NVDA.XNAS" })).items.map(keyOf)).toEqual(["cls-telegraph/c1"])
+    handle.close()
+  })
+})

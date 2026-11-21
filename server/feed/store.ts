@@ -136,9 +136,12 @@ function rowWhere(filter: FeedFilter) {
       where.push(`seq IN (${own})`)
       params.push(symbols)
     } else {
-      // 按组判断：条目所在的组（COALESCE(dup_of, seq)）里任何一条带这个标的就算命中，代表行是成员而标的只在主条目上时也一样
-      where.push(`COALESCE(items.dup_of, items.seq) IN (SELECT COALESCE(i.dup_of, i.seq) FROM items i WHERE i.seq IN (${own}))`)
-      params.push(symbols)
+      // 按组判断：先算出带这些标的的组 id 集合 G（组 id = 主条目的 seq），再按 seq ∈ G 或 dup_of ∈ G 匹配，两边分别走主键与 idx_items_dup_of。
+      // 不写成 COALESCE(dup_of, seq) IN (…)：表达式用不上索引，罕见标的会扫全库（300k 行实测 3 ms -> 88 ms，#9 审阅）。
+      // 前提：成员的 dup_of 直接指向主条目、不成链（enrich.ts 保证，test/enrich/perf.test.ts 断言）；成链的话 dup_of ∈ G 会漏掉链尾。
+      const groupsWith = `SELECT COALESCE(i.dup_of, i.seq) FROM items i WHERE i.seq IN (${own})`
+      where.push(`(items.seq IN (${groupsWith}) OR items.dup_of IN (${groupsWith}))`)
+      params.push(symbols, symbols)
     }
   }
   return { where, params }
@@ -216,13 +219,24 @@ export class FeedStore {
     return !!row
   }
 
-  /** SSE 用：这个组（主条目 seq = groupId）里任一条目带 symbols 之一。 */
-  async groupHasSymbol(groupId: number, symbols: string[]): Promise<boolean> {
+  /** SSE 用：这个组（主条目 seq = groupId）里任一条目（给了 beforeSeq 时只看 seq 更小的）带 symbols 之一。 */
+  async groupHasSymbol(groupId: number, symbols: string[], beforeSeq?: number): Promise<boolean> {
     const row = await this.db.prepare(`
       SELECT 1 AS hit FROM item_symbols WHERE symbol IN (SELECT value FROM json_each(?))
-        AND seq IN (SELECT seq FROM items WHERE seq = ? OR dup_of = ?) LIMIT 1
-    `).get(JSON.stringify(symbols), groupId, groupId)
+        AND seq IN (SELECT seq FROM items WHERE (seq = ? OR dup_of = ?) AND seq < ?) LIMIT 1
+    `).get(JSON.stringify(symbols), groupId, groupId, beforeSeq ?? Number.MAX_SAFE_INTEGER)
     return !!row
+  }
+
+  /** SSE 用：这个组在订阅范围（来源、关键词）里的代表行（范围内 seq 最小的那条）；范围里没有返回 undefined。 */
+  async representative(groupId: number, filter: Pick<FeedFilter, "sourceIds" | "keywords">): Promise<IngestedItem | undefined> {
+    const scope = memberScope({ ...filter, symbols: [], expand: false })
+    const rows = rowsOf<Record<string, any>>(await this.db.prepare(`
+      SELECT ${ITEM_SELECT} FROM items m WHERE (m.seq = ? OR m.dup_of = ?) ${scope.where.length ? `AND ${scope.where.join(" AND ")}` : ""} ORDER BY m.seq LIMIT 1
+    `).all(groupId, groupId, ...scope.params))
+    const items = rows.map(itemFromRow)
+    await this.enrich.hydrate(items)
+    return items[0]
   }
 
   /** seq 大于 after 的条目，按 seq 升序（SSE 补发用）。 */
