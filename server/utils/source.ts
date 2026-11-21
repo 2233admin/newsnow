@@ -11,7 +11,7 @@ export function defineSource(source: SourceGetter | R): SourceGetter | R {
 
 export function defineRSSSource(url: string, option?: SourceOption): SourceGetter {
   return async () => {
-    const data = await rss2json(url)
+    const data = await rss2json(url, option?.fetchText)
     if (!data?.items.length) throw new Error("Cannot fetch rss data")
     return data.items.map(item => ({
       title: item.title,
@@ -22,11 +22,13 @@ export function defineRSSSource(url: string, option?: SourceOption): SourceGette
   }
 }
 
+/** 用户源用的 RSSHub 实例；路由必须落在这个域名下（server/registry/spec.ts 的 checkRsshubRoute）。 */
+export const RSSHUB_BASE = "https://rsshub.rssforever.com"
+
 export function defineRSSHubSource(route: string, RSSHubOptions?: RSSHubOption, sourceOption?: SourceOption): SourceGetter {
   return async () => {
     // "https://rsshub.pseudoyu.com"
-    const RSSHubBase = "https://rsshub.rssforever.com"
-    const url = new URL(route, RSSHubBase)
+    const url = new URL(route, RSSHUB_BASE)
     url.searchParams.set("format", "json")
     RSSHubOptions = defu<RSSHubOption, RSSHubOption[]>(RSSHubOptions, {
       sorted: true,

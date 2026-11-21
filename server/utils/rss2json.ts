@@ -1,12 +1,17 @@
 import { XMLParser } from "fast-xml-parser"
 import type { RSSInfo } from "../types"
 
-export async function rss2json(url: string): Promise<RSSInfo | undefined> {
+/**
+ * fetchText 给用户源注入带 SSRF 防护的抓取（server/registry/net.ts）；内置源不传，仍走 myFetch。
+ */
+export async function rss2json(url: string, fetchText?: (url: string) => Promise<string>): Promise<RSSInfo | undefined> {
   if (!/^https?:\/\/[^\s$.?#].\S*/i.test(url)) return
 
-  const data = await myFetch(url, {
-    responseType: "text",
-  })
+  const data = fetchText
+    ? await fetchText(url)
+    : await myFetch(url, {
+      responseType: "text",
+    })
 
   const xml = new XMLParser({
     attributeNamePrefix: "",

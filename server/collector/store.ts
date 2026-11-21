@@ -225,6 +225,11 @@ export class ObservationStore {
     `).run(sourceId, attemptAt, message, attemptAt)
   }
 
+  /** 删掉一个源的健康记录（用户源被删除或改了地址时）；条目与观测不动。 */
+  async deleteHealth(sourceId: string) {
+    await this.db.prepare(`DELETE FROM source_health WHERE source_id = ?`).run(sourceId)
+  }
+
   /** 删掉 observed_at 早于 cutoff 的观测；items 永久保留，所以条目的首次出现时间不受影响。 */
   async purgeObservations(cutoff: number) {
     await this.db.prepare(`DELETE FROM observations WHERE observed_at < ?`).run(cutoff)
