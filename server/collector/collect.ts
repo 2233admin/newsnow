@@ -14,6 +14,13 @@ export type SourceMetas = Record<string, Pick<Source, "interval" | "redirect">>
  */
 export const DUE_TOLERANCE_MS = 10_000
 
+/**
+ * 清理过期观测的最小间隔。依据：保留期以天计，每小时清一次每次只删约 1/24 天的量（按 config.ts 的估算约一万行），
+ * 单次 DELETE 很短；每个 tick（1 分钟）都清则是白白多扫一遍索引。
+ */
+export const PURGE_INTERVAL_MS = 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+
 export interface TickFailure {
   sourceId: string
   error: string
@@ -27,6 +34,8 @@ export interface TickSummary {
   due: string[]
   succeeded: string[]
   failed: TickFailure[]
+  /** 本 tick 清理了 observed_at 早于它的观测；没到清理时间则没有 */
+  purgedBefore?: number
 }
 
 /**
@@ -78,6 +87,7 @@ export function createCollector(deps: CollectorDeps) {
   const clock = deps.clock ?? Date.now
   const log = deps.log ?? logger
   let running: Promise<TickSummary> | undefined
+  let lastPurgeAt: number | undefined
 
   async function collectOne(sourceId: string, attemptAt: number): Promise<TickFailure | undefined> {
     try {
@@ -112,8 +122,19 @@ export function createCollector(deps: CollectorDeps) {
       if (failure) failed.push(failure)
       else succeeded.push(id)
     })
+    let purgedBefore: number | undefined
+    if (lastPurgeAt === undefined || startedAt - lastPurgeAt >= PURGE_INTERVAL_MS) {
+      const cutoff = startedAt - config.retentionDays * DAY_MS
+      try {
+        await store.purgeObservations(cutoff)
+        lastPurgeAt = startedAt
+        purgedBefore = cutoff
+      } catch (e) {
+        log.warn("purge observations failed", e)
+      }
+    }
     log.info(`collect: ${due.length} due of ${ids.length}, ${succeeded.length} ok, ${failed.length} failed`)
-    return { startedAt, scheduled: ids.length, due, succeeded, failed }
+    return { startedAt, scheduled: ids.length, due, succeeded, failed, purgedBefore }
   }
 
   return {

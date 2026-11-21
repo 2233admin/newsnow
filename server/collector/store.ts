@@ -211,6 +211,11 @@ export class ObservationStore {
     `).run(sourceId, attemptAt, message, attemptAt)
   }
 
+  /** 删掉 observed_at 早于 cutoff 的观测；items 永久保留，所以条目的首次出现时间不受影响。 */
+  async purgeObservations(cutoff: number) {
+    await this.db.prepare(`DELETE FROM observations WHERE observed_at < ?`).run(cutoff)
+  }
+
   async getHealth(): Promise<HealthRecord[]> {
     const rows = rowsOf<Record<string, any>>(await this.db.prepare(`
       SELECT source_id, last_attempt_at, last_success_at, consecutive_failures, last_error, last_error_at, last_item_count

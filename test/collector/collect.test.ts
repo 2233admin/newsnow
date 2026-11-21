@@ -238,3 +238,44 @@ describe("并发上限", () => {
     expect(getter).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("保留策略", () => {
+  const DAY = 24 * 60 * MIN
+
+  it("observations 超过保留天数的被清理，items 永久保留", async () => {
+    let n = 0
+    const { collector, store, advance, db } = await setup(
+      { a: { interval: 10 * MIN } },
+      { a: async () => [{ id: "old", title: "旧闻", url: "u" }, ...(n++ === 0 ? [] : [{ id: "new", title: "新闻", url: "u" }])] },
+      { retentionDays: 3 },
+    )
+    await collector.tick() // t0：旧闻第一次出现
+    advance(4 * DAY)
+    await collector.tick() // 4 天后：t0 的观测已超过 3 天
+
+    const old = await store.getItemHistory("a", "old")
+    expect(old?.observations.map(o => o.observedAt)).toEqual([1_000_000 + 4 * DAY]) // t0 那条观测被清掉
+    expect(old?.item.firstSeenAt).toBe(1_000_000) // 但首次出现时间还在
+    expect(await selectAll(db, "SELECT * FROM items")).toHaveLength(2)
+  })
+
+  it("清理一小时最多做一次", async () => {
+    const { collector, store, advance } = await setup({ a: { interval: MIN } }, { a: async () => list("a") })
+    const purge = vi.spyOn(store, "purgeObservations")
+    await collector.tick()
+    advance(MIN)
+    await collector.tick()
+    expect(purge).toHaveBeenCalledTimes(1)
+    advance(60 * MIN)
+    await collector.tick()
+    expect(purge).toHaveBeenCalledTimes(2)
+  })
+
+  it("清理失败不影响采集", async () => {
+    const { collector, store } = await setup({ a: { interval: MIN } }, { a: async () => list("a") })
+    vi.spyOn(store, "purgeObservations").mockRejectedValue(new Error("locked"))
+    const summary = await collector.tick()
+    expect(summary.succeeded).toEqual(["a"])
+    expect(summary.purgedBefore).toBeUndefined()
+  })
+})
