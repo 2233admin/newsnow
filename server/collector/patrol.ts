@@ -29,12 +29,24 @@ export const PATROL_DEFAULTS = {
    * 停摆时 source_health 不再变化，连续失败数也不再涨，只看失败数会漏报，所以单独查这一条。
    */
   collectorStalledMinutes: 15,
+  /**
+   * 坏的源数占「被尝试过的源」多大比例以上，就当大面积故障、合并成一张汇总 issue。待定。
+   * 取 0.5：照独立审阅的建议（一半以上同时坏，更像本机断网或采集器故障，而不是几十个站点各自出事）。
+   */
+  massFailureRatio: 0.5,
+  /**
+   * 且坏的源至少几个。待定。
+   * 取 3：只部署了两三个源时「一半」只有 1–2 个，那是正常的单源故障，不该合并。
+   */
+  massFailureMinSources: 3,
 } as const
 
 export interface PatrolThresholds {
   minFailures: number
   minFailingMinutes: number
   collectorStalledMinutes: number
+  massFailureRatio: number
+  massFailureMinSources: number
 }
 
 export interface PatrolSourceMeta {
@@ -73,6 +85,8 @@ export interface PatrolReport {
   /** 在源清单里、但从没被尝试过的（刚加的源，或采集器没跑过） */
   pending: string[]
   okCount: number
+  /** failing 的数量到了大面积故障的线：开 issue 时合并成一张汇总，不逐源开 */
+  massFailure: boolean
   /** 是否有要报的（failing 非空或采集器停摆）；命令行据此决定退出码 */
   unhealthy: boolean
 }
@@ -136,6 +150,7 @@ export function buildPatrolReport(
     watching,
     pending,
     okCount,
+    massFailure: failing.length >= Math.max(thresholds.massFailureMinSources, Math.ceil((okCount + failing.length + watching.length) * thresholds.massFailureRatio)),
     unhealthy: failing.length > 0 || stalled,
   }
 }
@@ -216,6 +231,7 @@ interface IssueTarget {
 }
 
 const COLLECTOR_STALLED_PREFIX = `${ISSUE_TITLE_PREFIX} 采集器停摆 `
+const MASS_FAILURE_PREFIX = `${ISSUE_TITLE_PREFIX} 多数信源同时失败 `
 
 const isoOrNever = (ms: number | null) => ms === null ? "从未成功" : new Date(ms).toISOString()
 
@@ -260,6 +276,38 @@ function stalledTarget(report: PatrolReport): IssueTarget {
   }
 }
 
+function massFailureBody(report: PatrolReport, heading: string) {
+  const lines = report.failing.map(f => `- \`${f.sourceId}\`（${f.name}）：连续失败 ${f.consecutiveFailures} 次，${f.minutesSinceLastSuccess === null ? "从未成功" : `${f.minutesSinceLastSuccess} 分钟没成功`}，错误 \`${(f.lastError ?? "无").replace(/`/g, "'").slice(0, 120)}\``)
+  return [
+    heading,
+    "",
+    `同时坏了 ${report.failing.length} 个源（占被尝试过的 ${report.okCount + report.failing.length + report.watching.length} 个源的一半以上），疑似本机断网或采集器故障，不是各站点各自出事，所以不逐源开 issue。`,
+    "",
+    ...lines,
+    "",
+    "先看本机网络与代理是否正常，再看采集器日志；网络恢复后各源会自己恢复，不需要逐个改适配器。",
+  ].join("\n")
+}
+
+function massFailureTarget(report: PatrolReport): IssueTarget {
+  const lastSuccesses = report.failing.map(f => f.lastSuccessAt).filter((t): t is number => t !== null)
+  return {
+    key: "mass-failure",
+    prefix: MASS_FAILURE_PREFIX,
+    title: `${MASS_FAILURE_PREFIX}疑似本机断网或采集器故障`,
+    body: [
+      massFailureBody(report, `每日巡检（\`pnpm sources:patrol\`，${report.generatedAtIso}）发现多数信源同时失败。`),
+      "",
+      "修好后本巡检不会自动关这张 issue，请手动关。",
+      "",
+      "_由 `scripts/sources-patrol.ts` 自动创建；有未关闭的同类 issue 时不会重复创建。_",
+    ].join("\n"),
+    comment: massFailureBody(report, `每日巡检（${report.generatedAtIso}）发现多数信源再次同时失败，重新打开。`),
+    // 关了之后任何一个坏的源成功过，就说明好过又坏了
+    recoveredAt: lastSuccesses.length ? Math.max(...lastSuccesses) : null,
+  }
+}
+
 /** 重开时追加的评论：本次失败次数、最近错误、时间。 */
 export function reopenComment(f: FailingSource, report: Pick<PatrolReport, "generatedAtIso" | "thresholds">) {
   return [
@@ -285,7 +333,8 @@ export function reopenComment(f: FailingSource, report: Pick<PatrolReport, "gene
  */
 export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions): Promise<{ actions: IssueAction[], labelMissing: boolean, mutedLabelMissing: boolean }> {
   const { repo, label, dryRun, runGh } = opts
-  const targets: IssueTarget[] = [...report.failing.map(f => sourceTarget(f, report))]
+  // 大面积故障合并成一张汇总，不逐源开
+  const targets: IssueTarget[] = report.massFailure ? [massFailureTarget(report)] : report.failing.map(f => sourceTarget(f, report))
   if (report.collector.stalled) targets.push(stalledTarget(report))
   if (!targets.length) return { actions: [], labelMissing: false, mutedLabelMissing: false }
 

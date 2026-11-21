@@ -10,6 +10,7 @@
  *        --min-failures <n>、--min-minutes <n>、--stalled-minutes <n>
  *
  * 退出码：0 = 健康；1 = 有要报的源或采集器停摆；2 = 读不了库或参数错。
+ * 坏的源占被尝试过的源一半以上（且至少 3 个）时，只开 / 重开一张「多数信源同时失败」汇总 issue，不逐源开。
  * 采集器停摆（标题 `[信源巡检] 采集器停摆 …`）与坏掉的源走同一套开 issue / 去重 / 重开逻辑。
  *
  * 怎么定时：不在这里配。部署在本机，所以用本机的计划任务每天跑一次 `pnpm sources:patrol --open-issues`
@@ -67,6 +68,8 @@ const report = buildPatrolReport(health, sources, Date.now(), {
   minFailures: positive("min-failures", PATROL_DEFAULTS.minFailures),
   minFailingMinutes: positive("min-minutes", PATROL_DEFAULTS.minFailingMinutes),
   collectorStalledMinutes: positive("stalled-minutes", PATROL_DEFAULTS.collectorStalledMinutes),
+  massFailureRatio: PATROL_DEFAULTS.massFailureRatio,
+  massFailureMinSources: PATROL_DEFAULTS.massFailureMinSources,
 })
 
 const execFileAsync = promisify(execFile)

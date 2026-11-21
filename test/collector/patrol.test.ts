@@ -96,6 +96,35 @@ describe("buildPatrolReport", () => {
   })
 })
 
+describe("大面积故障判定（massFailure）", () => {
+  const many = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`s${i}`, { name: `源${i}`, interval: 2 * MIN }])) as Record<string, PatrolSourceMeta>
+  /** 前 failing 个源挂了（3 小时没成功、连挂 90 次），其余正常 */
+  async function reportWith(total: number, failing: number) {
+    const health = await healthFrom(async (store) => {
+      for (let i = 0; i < total; i++) {
+        if (i < failing) {
+          await store.recordSuccess(`s${i}`, NOW - 180 * MIN, 1)
+          await failTimes(store, `s${i}`, 90, NOW - 178 * MIN, "fetch failed")
+        } else {
+          await store.recordSuccess(`s${i}`, NOW - MIN, 1)
+        }
+      }
+    })
+    return buildPatrolReport(health, many(total), NOW)
+  }
+
+  it("坏的源数 >= 已被尝试过的源的一半，且至少 3 个：算大面积故障", async () => {
+    expect((await reportWith(6, 3)).massFailure).toBe(true)
+    expect((await reportWith(6, 6)).massFailure).toBe(true)
+    expect((await reportWith(6, 2)).massFailure).toBe(false)
+    // 总数很少时一半只有 1–2 个：不到最少 3 个就不合并
+    expect((await reportWith(4, 2)).massFailure).toBe(false)
+    expect((await reportWith(2, 2)).massFailure).toBe(false)
+    expect((await reportWith(5, 3)).massFailure).toBe(true)
+    expect((await reportWith(5, 2)).massFailure).toBe(false)
+  })
+})
+
 describe("issue 文本", () => {
   it("标题以 `[信源巡检] <id> ` 开头，正文含错误与阈值，错误里的反引号不会截断代码块", () => {
     const f = { sourceId: "ths", name: "同花顺", title: "快讯", intervalMinutes: 2, consecutiveFailures: 31, lastSuccessAt: NOW - 90 * MIN, minutesSinceLastSuccess: 90, lastError: "bad `json`", lastErrorAt: NOW }
@@ -236,6 +265,64 @@ describe("openIssues（假的 gh）", () => {
     const { actions } = await openIssues(await failingReport(), { ...base, dryRun: true, runGh: gh.runGh })
     expect(actions.map(a => a.action)).toEqual(["would-create"])
     expect(gh.creates()).toEqual([])
+  })
+
+  describe("大面积故障合并成一张汇总 issue", () => {
+    const MASS_PREFIX = `${ISSUE_TITLE_PREFIX} 多数信源同时失败 `
+    async function massReport() {
+      const meta = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`s${i}`, { name: `源${i}`, interval: 2 * MIN }])) as Record<string, PatrolSourceMeta>
+      const health = await healthFrom(async (store) => {
+        for (let i = 0; i < 6; i++) {
+          await store.recordSuccess(`s${i}`, NOW - (200 - i) * MIN, 1)
+          await failTimes(store, `s${i}`, 90, NOW - 150 * MIN, "fetch failed")
+        }
+        await store.recordSuccess("s5", NOW - 1 * MIN, 1)
+      })
+      const report = buildPatrolReport(health, meta, NOW)
+      expect(report.massFailure).toBe(true)
+      expect(report.failing).toHaveLength(5)
+      return report
+    }
+
+    it("只创建一张汇总 issue，列出所有坏的源，不逐源创建", async () => {
+      const gh = fakeGh()
+      const { actions } = await openIssues(await massReport(), { ...base, dryRun: false, runGh: gh.runGh })
+      expect(actions.map(a => [a.action, a.sourceId])).toEqual([["created", "mass-failure"]])
+      expect(gh.creates()).toHaveLength(1)
+      const [create] = gh.creates()
+      expect(create.find(a => a.startsWith("title="))!.startsWith(`title=${MASS_PREFIX}`)).toBe(true)
+      const body = create.find(a => a.startsWith("body="))!
+      for (const id of ["s0", "s1", "s2", "s3", "s4"]) expect(body).toContain(`\`${id}\``)
+      expect(body).toContain("本机断网")
+    })
+
+    it("已有未关闭的汇总 issue：不重复创建；dry-run 不创建", async () => {
+      const gh = fakeGh({ open: [{ number: 31, title: `${MASS_PREFIX}疑似本机断网或采集器故障` }] })
+      const r = await openIssues(await massReport(), { ...base, dryRun: false, runGh: gh.runGh })
+      expect(r.actions.map(a => [a.action, a.number])).toEqual([["exists", 31]])
+      const dry = fakeGh()
+      const r2 = await openIssues(await massReport(), { ...base, dryRun: true, runGh: dry.runGh })
+      expect(r2.actions.map(a => a.action)).toEqual(["would-create"])
+      expect(dry.creates()).toEqual([])
+    })
+
+    it("已关闭的汇总 issue：关了之后有源成功过（现在又大面积坏）才重开，否则不动", async () => {
+      // 坏的源里最近成功是 NOW-196 分钟（s4）
+      const stillBad = fakeGh({ open: [{ number: 31, title: `${MASS_PREFIX}x`, state: "closed", closed_at: new Date(NOW - 60 * MIN).toISOString() }] })
+      const r1 = await openIssues(await massReport(), { ...base, dryRun: false, runGh: stillBad.runGh })
+      expect(r1.actions.map(a => a.action)).toEqual(["closed-still-failing"])
+      const recovered = fakeGh({ open: [{ number: 31, title: `${MASS_PREFIX}x`, state: "closed", closed_at: new Date(NOW - 400 * MIN).toISOString() }] })
+      const r2 = await openIssues(await massReport(), { ...base, dryRun: false, runGh: recovered.runGh })
+      expect(r2.actions.map(a => a.action)).toEqual(["reopened"])
+      expect(recovered.creates()).toEqual([])
+    })
+
+    it("大面积故障时再停摆：汇总与停摆各一张", async () => {
+      const report = await massReport()
+      const gh = fakeGh()
+      const { actions } = await openIssues({ ...report, collector: { ...report.collector, stalled: true, minutesSinceLastAttempt: 90 } }, { ...base, dryRun: false, runGh: gh.runGh })
+      expect(actions.map(a => a.sourceId).sort()).toEqual(["collector", "mass-failure"])
+    })
   })
 
   describe("采集器停摆也走同一套 issue 流程", () => {
