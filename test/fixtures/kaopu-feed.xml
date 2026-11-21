@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>靠谱新闻 · 要闻</title>
+    <link>https://kaopu.news/</link>
+    <description>靠谱新闻立足全球视野，为华语读者呈现有深度、有价值的新闻报道</description>
+    <language>zh-cn</language>
+    <atom:link href="https://kaopunews.com/feed.xml" rel="self" type="application/rss+xml" />
+    <ttl>30</ttl>
+    <item>
+      <title>中国发改委要求加快政府投资项目建设</title>
+      <link>https://kaopu.news/story/2026-11-21/china-urges-faster-government-investment-projects-499ea3?utm_source=rss&amp;utm_medium=feed</link>
+      <guid isPermaLink="true">https://kaopu.news/story/2026-11-21/china-urges-faster-government-investment-projects-499ea3</guid>
+      <pubDate>Sat, 21 Nov 2026 12:37:13 GMT</pubDate>
+      <description>中国国家发展和改革委员会在11月20日举行的政府投资资金支付使用和项目储备工作视频会议上，要求地方加快政府投资项目建设和资金支付，并强化跟踪调度与协调服务，推动项目尽快形成更多实物工作量。</description>
+    </item>
+    <item>
+      <title>中国人民银行宣布政策利率锚切换至隔夜逆回购利率</title>
+      <link>https://kaopu.news/story/2026-11-21/pboc-switches-policy-rate-anchor-overnight-reverse-repo-045ec4?utm_source=rss&amp;utm_medium=feed</link>
+      <guid isPermaLink="true">https://kaopu.news/story/2026-11-21/pboc-switches-policy-rate-anchor-overnight-reverse-repo-045ec4</guid>
+      <pubDate>Sat, 21 Nov 2026 12:36:37 GMT</pubDate>
+      <description>中国人民银行10月30日宣布，自2026年11月2日起，政策利率锚由7天期逆回购操作利率转为隔夜逆回购操作利率。</description>
+    </item>
+    <item>
+      <title>欧盟禁止向经合组织以外国家出口塑料垃圾</title>
+      <link>https://kaopu.news/story/2026-11-21/eu-bans-plastic-waste-exports-non-oecd-411455?utm_source=rss&amp;utm_medium=feed</link>
+      <guid isPermaLink="true">https://kaopu.news/story/2026-11-21/eu-bans-plastic-waste-exports-non-oecd-411455</guid>
+      <pubDate>Sat, 21 Nov 2026 11:39:00 GMT</pubDate>
+      <description>欧盟禁止向经合组织（OECD）以外国家出口塑料垃圾的措施已于2026年11月21日生效。</description>
+    </item>
+    <item>
+      <title>黄循财称新中将拓展数字经济和人工智能合作</title>
+      <link>https://kaopu.news/story/2026-11-21/lawrence-wong-china-digital-ai-cooperation-61098f?utm_source=rss&amp;utm_medium=feed</link>
+      <guid isPermaLink="true">https://kaopu.news/story/2026-11-21/lawrence-wong-china-digital-ai-cooperation-61098f</guid>
+      <pubDate>Sat, 21 Nov 2026 10:51:03 GMT</pubDate>
+      <description>新加坡总理黄循财11月21日结束为期四天的中国工作访问时，接受随行新加坡媒体采访并表示，新中将拓展数字经济和人工智能合作；新加坡希望非敏感尖端技术领域继续开放，避免美中竞争使各国使用的技术分化为不同体系。</description>
+    </item>
+    <item>
+      <title>据报特朗普政府促乌克兰明年1月前与俄达成协议</title>
+      <link>https://kaopu.news/story/2026-11-21/trump-presses-ukraine-russia-peace-deal-8bc5af?utm_source=rss&amp;utm_medium=feed</link>
+      <guid isPermaLink="true">https://kaopu.news/story/2026-11-21/trump-presses-ukraine-russia-peace-deal-8bc5af</guid>
+      <pubDate>Sat, 21 Nov 2026 10:49:44 GMT</pubDate>
+      <description>特朗普政府据报正要求乌克兰尽快与俄罗斯达成和平协议，希望在2027年1月初前结束战争，时间点早于民主党掌控美国国会。</description>
+    </item>
+  </channel>
+</rss>

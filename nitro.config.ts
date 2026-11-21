@@ -7,6 +7,13 @@ import { projectDir } from "./shared/dir"
 const nitroOption: Parameters<typeof viteNitro>[0] = {
   experimental: {
     database: true,
+    tasks: true,
+  },
+  // 采集守护进程的心跳（#2184）：每分钟一次，由 collect:tick 按各源 interval 决定抓哪些。
+  // node-server / bun 预设由进程内的 croner 触发；Cloudflare Pages 不支持 cron 触发器，
+  // 那里需要另配 Worker 或外部定时调用 collect:tick。
+  scheduledTasks: {
+    "* * * * *": ["collect:tick"],
   },
   rollupConfig: {
     plugins: [RollopGlob()],
@@ -36,6 +43,8 @@ if (process.env.VERCEL) {
   nitroOption.preset = "vercel-edge"
   // You can use other online database, do it yourself. For more info: https://db0.unjs.io/connectors
   nitroOption.database = undefined
+  // vercel-edge 没有进程内调度，也没有库可写，采集不适用
+  nitroOption.scheduledTasks = {}
   // nitroOption.vercel = {
   //   config: {
   //     cache: []
