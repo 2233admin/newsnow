@@ -133,7 +133,7 @@ export function createCollector(deps: CollectorDeps) {
         log.warn("purge observations failed", e)
       }
     }
-    log.info(`collect: ${due.length} due of ${ids.length}, ${succeeded.length} ok, ${failed.length} failed`)
+    if (due.length) log.info(`collect: ${due.length} due of ${ids.length}, ${succeeded.length} ok, ${failed.length} failed`)
     return { startedAt, scheduled: ids.length, due, succeeded, failed, purgedBefore }
   }
 

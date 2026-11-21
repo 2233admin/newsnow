@@ -50,7 +50,7 @@ const now = Date.now()
 const minutes = (ms: number) => `${Math.round(ms / 60000)}m`
 let missing = 0
 let failing = 0
-console.log(["source".padEnd(26), "interval", "cycles", "expected", "obs".padStart(7), "items".padStart(6), "health"].join("  "))
+console.log(["source".padEnd(26), "interval", "cycles", "~expected", "obs".padStart(7), "items".padStart(6), "health"].join("  "))
 for (const [id, meta] of Object.entries(sources)) {
   if (meta.redirect) continue
   const o = obs.get(id)
@@ -68,7 +68,7 @@ for (const [id, meta] of Object.entries(sources)) {
     id.padEnd(26),
     minutes(meta.interval).padStart(8),
     String(o?.cycles ?? 0).padStart(6),
-    String(expected).padStart(8),
+    String(expected).padStart(9),
     String(o?.n ?? 0).padStart(7),
     String(items.get(id) ?? 0).padStart(6),
     status,
