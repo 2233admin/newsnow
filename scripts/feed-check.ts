@@ -77,7 +77,7 @@ if (dbPath) {
     console.error(`找不到数据库 ${dbPath}`)
     process.exit(2)
   }
-  const db = createDatabase(sqlite({ path: dbPath, readonly: true }))
+  const db = createDatabase(sqlite({ path: dbPath }))
   const { n } = await db.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }
   console.log(`库里 items：${n} 行`)
   // 翻页期间服务还在采集会多出新条目：翻到的只能比开始时的多，不能少
