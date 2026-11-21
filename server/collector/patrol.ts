@@ -214,6 +214,17 @@ interface IssueRef {
 /** 带这个标签的已关闭 issue 永不重开（人明确说「不再提醒」）。仓库里没有这个标签就没有票能带它，等于不启用。 */
 export const MUTED_LABEL = "news:muted"
 
+/** 标签是否存在：只有 404 算不存在，别的错误原样抛出。 */
+async function labelExists(runGh: RunGh, repo: string, label: string) {
+  try {
+    await runGh(["api", `repos/${repo}/labels/${encodeURIComponent(label)}`, "--silent"])
+    return true
+  } catch (e) {
+    if (/\b404\b|Not Found/i.test(e instanceof Error ? e.message : String(e))) return false
+    throw e
+  }
+}
+
 /** 一张要维护的 issue：一个源，或「采集器停摆」。 */
 interface IssueTarget {
   /** IssueAction.sourceId 里写的名字 */
@@ -338,22 +349,16 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
   if (report.collector.stalled) targets.push(stalledTarget(report))
   if (!targets.length) return { actions: [], labelMissing: false, mutedLabelMissing: false }
 
-  // 开着的与关了的都要看（REST 的 /issues 也会返回 PR，用 pull_request 字段滤掉）
-  const raw = await runGh(["api", "--paginate", `repos/${repo}/issues?state=all&per_page=100`, "--jq", ".[] | select(.pull_request | not) | {number, title, html_url, state, closed_at, labels: [.labels[].name]}"])
-  const all: IssueRef[] = raw.split("\n").map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l))
+  // 标签检查只把 404 当「不存在」；403、网络错误等直接抛出（退出码 2），不能因为一次抖动就创建一张没标签的 issue
+  const labelMissing = !(await labelExists(runGh, repo, label))
+  const mutedLabelMissing = !(await labelExists(runGh, repo, MUTED_LABEL))
 
-  let labelMissing = false
-  try {
-    await runGh(["api", `repos/${repo}/labels/${encodeURIComponent(label)}`, "--silent"])
-  } catch {
-    labelMissing = true
-  }
-  let mutedLabelMissing = false
-  try {
-    await runGh(["api", `repos/${repo}/labels/${encodeURIComponent(MUTED_LABEL)}`, "--silent"])
-  } catch {
-    mutedLabelMissing = true
-  }
+  // 开着的与关了的都要看（REST 的 /issues 也会返回 PR，用 pull_request 字段滤掉）。
+  // 标签存在时只查带它的：全量翻页对上千条 issue 的仓库要 30 秒（2026-11-21 审阅者实测），且随仓库增长线性变长；
+  // 代价是标签建立之前就有的巡检 issue（没有标签）查不到，退回全量只在标签不存在时。
+  const filter = labelMissing ? "" : `&labels=${encodeURIComponent(label)}`
+  const raw = await runGh(["api", "--paginate", `repos/${repo}/issues?state=all&per_page=100${filter}`, "--jq", ".[] | select(.pull_request | not) | {number, title, html_url, state, closed_at, labels: [.labels[].name]}"])
+  const all: IssueRef[] = raw.split("\n").map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l))
 
   const actions: IssueAction[] = []
   for (const t of targets) {

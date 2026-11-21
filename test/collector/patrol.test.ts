@@ -146,12 +146,13 @@ describe("openIssues（假的 gh）", () => {
     })
     return buildPatrolReport(health, { good: sources.good, down: sources.down }, NOW)
   }
-  function fakeGh(opts: { open?: { number: number, title: string, state?: "open" | "closed", closed_at?: string, labels?: string[] }[], labelExists?: boolean, mutedLabelExists?: boolean } = {}) {
+  function fakeGh(opts: { open?: { number: number, title: string, state?: "open" | "closed", closed_at?: string, labels?: string[] }[], labelExists?: boolean, mutedLabelExists?: boolean, labelError?: string } = {}) {
     const calls: string[][] = []
     const runGh: RunGh = async (args) => {
       calls.push(args)
       if (args[1].includes("/labels/")) {
         const muted = args[1].includes("muted")
+        if (opts.labelError) throw new Error(opts.labelError)
         if (muted ? opts.mutedLabelExists === false : opts.labelExists === false) throw new Error("gh: Not Found (HTTP 404)")
         return ""
       }
@@ -162,6 +163,7 @@ describe("openIssues（假的 gh）", () => {
       runGh,
       calls,
       creates: () => calls.filter(c => c[1] === "repos/XartLab/KATANAview/issues" && c.includes("-f")),
+      listings: () => calls.filter(c => c.includes("--paginate")).map(c => c[2]),
       reopens: () => calls.filter(c => c.includes("PATCH")),
       comments: () => calls.filter(c => c[1].endsWith("/comments")),
     }
@@ -250,6 +252,23 @@ describe("openIssues（假的 gh）", () => {
     const res = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })
     expect(res.actions.map(a => a.action)).toEqual(["reopened"])
     expect(res.mutedLabelMissing).toBe(true)
+  })
+
+  it("标签存在时，查 issue 只查带这个标签的（避免随仓库增长越翻越慢）；标签不存在时退回全量", async () => {
+    const withLabel = fakeGh()
+    await openIssues(await failingReport(), { ...base, dryRun: true, runGh: withLabel.runGh })
+    expect(withLabel.listings()).toEqual(["repos/XartLab/KATANAview/issues?state=all&per_page=100&labels=area%3Anews"])
+    const noLabel = fakeGh({ labelExists: false })
+    await openIssues(await failingReport(), { ...base, dryRun: true, runGh: noLabel.runGh })
+    expect(noLabel.listings()).toEqual(["repos/XartLab/KATANAview/issues?state=all&per_page=100"])
+  })
+
+  it("标签检查只把 404 当「不存在」；403、网络错误等直接抛出，不创建任何 issue", async () => {
+    for (const labelError of ["gh: Forbidden (HTTP 403)", "dial tcp: lookup api.github.com: no such host"]) {
+      const gh = fakeGh({ labelError })
+      await expect(openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })).rejects.toThrow(labelError)
+      expect(gh.creates()).toEqual([])
+    }
   })
 
   it("标签不存在：照样创建但不加标签，并报告 labelMissing", async () => {
