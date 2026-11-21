@@ -1,7 +1,7 @@
 /**
  * /api/s 与 /api/s/entire 的行为锁定（#2184 验收「原有 /api/s 接口行为不变」）。
- * 这些测试在采集器加入之前的代码上也是绿的：它们描述的是上游原有的「按需抓取 + 缓存」行为，
- * 采集器不得改变它，也不得被它触发。
+ * 这些测试描述上游原有的「按需抓取 + 缓存」行为，采集器不得改变它，也不得被它触发。
+ * server/api/s/* 未改动；server/database/cache.ts 只有 getEntire 的 SQL 参数化与分块（行为不变，见文件末尾的专门测试）。
  */
 import { createApp, createError, createRouter, defineEventHandler, getQuery, readBody, toWebHandler } from "h3"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
