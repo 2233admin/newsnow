@@ -6,6 +6,21 @@ import crypto from "#/enrich/dict/crypto.json"
 
 const ids = (title: string) => extractSymbols(title)
 
+describe("词典：新浪除权日的截短简称（审阅 #8 第 2 项）", () => {
+  it("简称里没有 XD / XR / DR / N / C 前缀（它们的名字被截短，会误命中）", () => {
+    expect(ashare.filter(r => /^(?:XD|XR|DR|N|C)[\u3400-\u9FFF]/.test(r[2] as string))).toEqual([])
+  })
+
+  it("「中国中央……」「中信银河」不是中国中免、中信银行；全称才是", () => {
+    expect(ids("中国中央银行宣布降息")).toEqual([])
+    expect(ids("中国中央电视台报道")).toEqual([])
+    expect(ids("中信银河证券发布研报")).toEqual([])
+    expect(ids("渤海轮船公司")).toEqual([])
+    expect(ids("中国中免发布三季报")).toEqual(["601888.XSHG"])
+    expect(ids("中信银行（601998）发布公告")).toEqual(["601998.XSHG"])
+  })
+})
+
 describe("词典", () => {
   it("规模与格式：每个 id 都是「代码.场所」，场所在 KATANAview 登记过的集合里", () => {
     const venues = new Set(["XSHG", "XSHE", "BJSE", "XNAS", "XNYS", "ARCX", "XASE", "BATS", "IEXG", "BINANCE"])

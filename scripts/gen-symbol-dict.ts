@@ -39,6 +39,21 @@ async function get(url: string, headers: Record<string, string> = {}, tries = 4)
 
 const write = (name: string, value: unknown) => writeFileSync(OUT + name, `${JSON.stringify(value)}\n`)
 
+/**
+ * 新浪在除权除息日、新股上市首日给简称加 XD / XR / DR / N / C 前缀，并把名字截短（2026-11-22 的 601888 是「XD中国中」，真名中国中免）。
+ * 截短后的名字（「中国中」「中信银」）会在新闻里误命中（「中国中央银行」），所以带这些前缀的一律不收新浪给的名字：
+ * 下面的表里有全称的用全称，没有的丢掉并打印出来，交给人补。表是 2026-11-22 生成时对着东方财富 / 交易所公告核的全称，读不到的标「待核对」。
+ */
+const PREFIXED = /^(?:XD|XR|DR|N|C)(?=[\u3400-\u9FFF])/
+const FULL_NAMES: Record<string, string> = {
+  601888: "中国中免",
+  601998: "中信银行",
+  603167: "渤海轮渡",
+  920176: "维琪科技",
+  920201: "百瑞吉",
+  688179: "阿拉丁",
+}
+
 async function ashare() {
   const rows: [string, string][] = []
   const base = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
@@ -52,8 +67,19 @@ async function ashare() {
   // 代码前缀 sh / sz / bj 决定场所（XSHG / XSHE / BJSE）
   const bad = rows.filter(([s]) => !/^(?:sh|sz|bj)\d{6}$/.test(s))
   if (bad.length) throw new Error(`A 股代码格式不对：${bad.slice(0, 3)}`)
-  console.log(`A 股 ${rows.length} 只`)
-  write("ashare.json", rows.map(([s, n]) => [s.slice(2), s.slice(0, 2), n]))
+  const kept: [string, string][] = []
+  for (const [symbol, name] of rows) {
+    if (!PREFIXED.test(name)) {
+      kept.push([symbol, name])
+      continue
+    }
+    const full = FULL_NAMES[symbol.slice(2)]
+    if (full) kept.push([symbol, full])
+    else console.warn(`丢掉带临时前缀的简称（名字可能被截短，请查全称补进 FULL_NAMES）：${symbol} ${name}`)
+  }
+  if (kept.some(([, n]) => PREFIXED.test(n))) throw new Error("A 股简称里还有 XD / XR / DR / N / C 前缀")
+  console.log(`A 股 ${kept.length} 只（${rows.length - kept.length} 只带临时前缀的丢掉了）`)
+  write("ashare.json", kept.map(([s, n]) => [s.slice(2), s.slice(0, 2), n]))
 }
 
 const US_MIC: Record<string, string> = { N: "XNYS", A: "XASE", P: "ARCX", Z: "BATS", V: "IEXG" }

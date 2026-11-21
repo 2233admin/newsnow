@@ -64,7 +64,7 @@ export interface SymbolMatch {
 
 const VENUE_OF_MARKET: Record<string, string> = { sh: "XSHG", sz: "XSHE", bj: "BJSE" }
 const CJK = /[\u3400-\u9FFF\uF900-\uFAFF]/
-const A_NAME_PREFIX = /^(?:S\*ST|\*ST|SST|ST|XD|XR|DR|N|C)(?=[\u3400-\u9FFF])/
+const A_NAME_PREFIX = /^(?:S\*ST|\*ST|SST|ST)(?=[\u3400-\u9FFF])/
 const A_NAME_SUFFIX = /(?:-UW|-WD|-U|-W|-S)$/
 const CN_SUFFIX = /(?:股份有限公司|有限公司|控股公司|控股集团|控股|集团公司|集团|公司)$/
 const EN_SUFFIX = new Set(["inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited", "holdings", "holding", "group", "plc", "nv", "ag", "sa", "se", "lp", "llc", "the", "class", "ordinary", "shares", "common", "stock", "adr", "ads", "com"])
