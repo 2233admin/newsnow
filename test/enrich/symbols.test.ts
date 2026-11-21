@@ -3,8 +3,29 @@ import { SYMBOL_ID, extractSymbols, getMatcher } from "#/enrich/symbols"
 import ashare from "#/enrich/dict/ashare.json"
 import us from "#/enrich/dict/us.json"
 import crypto from "#/enrich/dict/crypto.json"
+import aliases from "#/enrich/dict/aliases.json"
 
 const ids = (title: string) => extractSymbols(title)
+
+describe("三字以上的常用词简称要语境（审阅 #8 第 6 项）", () => {
+  it("农产品、新世界、机器人：没有股票语境不认；有语境才认", () => {
+    expect(ids("美国总统特朗普：亚洲之行成果斐然，菲律宾将采购美国农产品。")).toEqual([])
+    expect(ids("新世界的大门已经打开")).toEqual([])
+    expect(ids("人形机器人量产在即")).toEqual([])
+    expect(ids("农产品板块早盘拉升")).toEqual(["000061.XSHE"])
+    expect(ids("新世界股价涨停")).toEqual(["600628.XSHG"])
+  })
+
+  it("几乎只指公司的名字不受影响", () => {
+    expect(ids("中国移动发布三季报")).toEqual(["600941.XSHG"])
+    expect(ids("五粮液：回购股份")).toEqual(["000858.XSHE"])
+  })
+
+  it("名单里的词在词典里都是真的 A 股简称", () => {
+    const names = new Set(ashare.map(r => r[2] as string))
+    for (const w of aliases.stop.ctx) expect([...names].some(n => n.includes(w)), w).toBe(true)
+  })
+})
 
 describe("词典：新浪除权日的截短简称（审阅 #8 第 2 项）", () => {
   it("简称里没有 XD / XR / DR / N / C 前缀（它们的名字被截短，会误命中）", () => {

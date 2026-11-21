@@ -38,6 +38,12 @@ export interface Aliases {
   stop: {
     /** 不当成标的名称的中文串（泛化词、常用词）；小写比较 */
     cn: string[]
+    /**
+     * 三个字以上、本身是常用词 / 地名的 A 股简称（农产品、新世界、机器人……）：与两字简称同规则，标题里要有股票语境才认。
+     * 来源：jieba 0.42.1 的 dict.txt（MIT，2026-11-22 读）里词频 ≥ 20 的 A 股简称（去 ST 前缀与末尾 A / B），
+     * 扣掉人工挑出的、几乎只指公司的（中国移动、五粮液、招商银行等 43 个）。词频阈值 20 没有依据，是看着名单定的，待定。
+     */
+    ctx?: string[]
     /** 英文名里不当成标的的 */
     en: string[]
     /** 括号里 / 独立出现也不当成美股代码的缩写 */
@@ -137,6 +143,7 @@ export interface Matcher {
 
 export function createMatcher(data: DictData): Matcher {
   const { aliases } = data
+  const ctxCn = new Set((aliases.stop.ctx ?? []).map(s => norm(s).toLowerCase()))
   const stopCn = new Set(aliases.stop.cn.map(s => norm(s).toLowerCase()))
   const stopEn = new Set(aliases.stop.en.map(s => norm(s).toLowerCase()))
   const macro = new Set(aliases.stop.macro)
@@ -294,7 +301,7 @@ export function createMatcher(data: DictData): Matcher {
     for (const hit of trie.scan(text.toLowerCase())) {
       const id = hit.ids[0]
       // 两个字的 A 股简称（发展、标准、动力……）太容易是普通词：标题里要同时有股票语境的词才认
-      if (hit.end - hit.start <= 2 && ashareById.has(id) && !gated) continue
+      if (!gated && ashareById.has(id) && (hit.end - hit.start <= 2 || ctxCn.has(text.slice(hit.start, hit.end).toLowerCase()))) continue
       add(id, "name", text.slice(hit.start, hit.end), hit.start)
     }
     // 英文公司名：整词序列，每个词首字母大写（连接词除外）
