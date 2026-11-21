@@ -225,7 +225,7 @@ describe("游标翻页：不重复、不遗漏", () => {
   it("查询计划：翻页走 idx_items_feed，不对全表做临时排序", async () => {
     const w = await feedWorld()
     await ingest(w, "jin10", Array.from({ length: 50 }, (_, i) => row(`x${i}`)), T0)
-    const plan = async (sql: string, ...params: unknown[]) => ((await w.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params)) as { detail: string }[]).map(r => r.detail).join(" | ")
+    const plan = async (sql: string, ...params: (string | number)[]) => ((await w.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params)) as { detail: string }[]).map(r => r.detail).join(" | ")
     const unfiltered = await plan(`SELECT * FROM items ORDER BY feed_ts DESC, source_id DESC, item_id DESC LIMIT 51`)
     expect(unfiltered).toContain("idx_items_feed")
     expect(unfiltered).not.toContain("TEMP B-TREE")

@@ -100,18 +100,18 @@ describe("信息流的 HTTP 接口", () => {
   it("查询：入库的条目按排序键返回，limit 与 nextCursor 能翻页", async () => {
     const store = await getObservationStore()
     await store.recordObservations("jin10", Array.from({ length: 5 }, (_, i) => row(`q${i}`, { pubDate: T0 - i * 1000 })), T0)
-    const first = await (await fetch(url("/api/feed?limit=2&source=jin10"))).json()
+    const first: any = await (await fetch(url("/api/feed?limit=2&source=jin10"))).json()
     expect(first.items.map((i: any) => i.itemId)).toEqual(["q0", "q1"])
     expect(first.nextCursor).toBeTruthy()
-    const second = await (await fetch(url(`/api/feed?limit=2&source=jin10&cursor=${encodeURIComponent(first.nextCursor)}`))).json()
+    const second: any = await (await fetch(url(`/api/feed?limit=2&source=jin10&cursor=${encodeURIComponent(first.nextCursor)}`))).json()
     expect(second.items.map((i: any) => i.itemId)).toEqual(["q2", "q3"])
-    const sym = await (await fetch(url("/api/feed?symbol=600519"))).json()
+    const sym: any = await (await fetch(url("/api/feed?symbol=600519"))).json()
     expect(sym).toMatchObject({ items: [], unimplemented: ["symbol"] })
   })
 
   it("sSE：新条目入库后推到；断线后带 Last-Event-ID 续上，不丢不重", async () => {
     const store = await getObservationStore()
-    const head = (await (await fetch(url("/api/feed?limit=1"))).json()).latestSeq as number
+    const head = ((await (await fetch(url("/api/feed?limit=1"))).json()) as any).latestSeq as number
     const a = await sse(`/api/feed/stream?lastEventId=${head}`)
     expect(a.res.status).toBe(200)
     expect(a.res.headers.get("content-type")).toContain("text/event-stream")

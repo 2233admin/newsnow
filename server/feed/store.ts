@@ -1,4 +1,4 @@
-import type { Database } from "db0"
+import type { Database, Primitive } from "db0"
 import { ITEM_SELECT, itemFromRow } from "#/collector/store"
 import type { IngestedItem } from "#/collector/store"
 
@@ -47,7 +47,7 @@ const escapeLike = (term: string) => term.replace(/[\\%_]/g, c => `\\${c}`)
 
 export function buildWhere(filter: FeedFilter, cursor?: FeedCursor) {
   const where: string[] = []
-  const params: unknown[] = []
+  const params: Primitive[] = []
   if (filter.sourceIds) {
     where.push(`source_id IN (SELECT value FROM json_each(?))`)
     params.push(JSON.stringify(filter.sourceIds))
