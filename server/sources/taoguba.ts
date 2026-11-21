@@ -9,13 +9,18 @@ import type { NewsItem } from "@shared/types"
  * 每行：标题与链接 `a.mw300[href=/a/<帖子号>]`（title 属性是完整标题）、「评论 / 浏览」、回帖日期、作者、发帖日期。
  * 读取日期 2026-11-21。
  * robots.txt（https://www.tgb.cn/robots.txt，同日读取）只禁止 /view?topicID=*、/Reply/*、/new/ngb/*、/new/dav/*，/bbs/ 与 /a/ 不在其中。
- * 页面没有给年份：「MM-DD HH:mm」按北京时间解析，补上今年；补完比当前时间晚一天以上的，说明是跨年前的帖子，取去年。
+ * 页面没有给年份：「MM-DD HH:mm」按北京时间解析，补上今年；补完比当前时间晚 10 分钟以上的，说明是去年的帖子，取去年（容差依据见 CLOCK_SKEW_MS）。
  *
  * 为什么不用「精华加油」(/jinghua/)：那是人工挑选的精华帖，量少且不是热度；综合吧默认序更接近热帖。
  */
 
 const baseURL = "https://www.tgb.cn"
-const DAY = 24 * 60 * 60 * 1000
+/**
+ * 补完年份的发帖时间比现在晚多少以内，仍算今年。
+ * 页面时间是北京时间、精确到分钟，服务器时间也准，发帖时间不可能真的在未来；放 10 分钟只是容两边时钟的误差。
+ * 放大到一天会把「去年的明天」补成今年的明天（约一年里有一天会错），所以不能大。依据：独立审阅，2026-11-21。
+ */
+const CLOCK_SKEW_MS = 10 * 60 * 1000
 
 /** 「11-19 21:05」或「2025-12-30 10:00」（北京时间）→ 毫秒；认不出返回 undefined */
 export function parseTaogubaDate(text: string, now = Date.now()): number | undefined {
@@ -27,7 +32,7 @@ export function parseTaogubaDate(text: string, now = Date.now()): number | undef
   if (year) return at(Number(year))
   const thisYear = Number(new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 4))
   const t = at(thisYear)
-  return t > now + DAY ? at(thisYear - 1) : t
+  return t > now + CLOCK_SKEW_MS ? at(thisYear - 1) : t
 }
 
 export default defineSource(async () => {

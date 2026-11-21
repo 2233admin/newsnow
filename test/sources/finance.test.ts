@@ -100,11 +100,25 @@ describe("淘股吧综合吧热帖", () => {
     await expect(taoguba()).rejects.toThrow("没有解析出任何帖子")
   })
 
-  it("发帖时间：没写年份的取今年，补完晚于现在一天以上的取去年；写了年份的照写；认不出的是 undefined", () => {
+  it("发帖时间：没写年份的取今年，补完晚于现在 10 分钟以上的取去年；写了年份的照写；认不出的是 undefined", () => {
     const now = CST(1, 2, 8, 0)
     expect(parseTaogubaDate("12-30 10:00", now)).toBe(CST(12, 30, 10, 0, 2025))
     expect(parseTaogubaDate("01-02 07:59", now)).toBe(CST(1, 2, 7, 59))
     expect(parseTaogubaDate("2024-05-06 09:30", now)).toBe(CST(5, 6, 9, 30, 2024))
+    // 时间容差只有 10 分钟：发帖日是「去年的明天」时必须补成去年，不能落在未来的明天
+    const evening = CST(11, 21, 22, 40)
+    expect(parseTaogubaDate("11-22 10:00", evening)).toBe(CST(11, 22, 10, 0, 2025))
+    expect(parseTaogubaDate("11-22 22:40", evening)).toBe(CST(11, 22, 22, 40, 2025))
+    // 10 分钟以内的「未来」算两边时钟误差，仍取今年；超过就取去年
+    expect(parseTaogubaDate("11-21 22:50", evening)).toBe(CST(11, 21, 22, 50))
+    expect(parseTaogubaDate("11-21 22:51", evening)).toBe(CST(11, 21, 22, 51, 2025))
+    // 跨年边界：北京时间 1 月 1 日凌晨，刚过去的 12 月 31 日是去年；站点时间比本机快几分钟的 1 月 1 日帖子仍是今年
+    const newYear = CST(1, 1, 0, 5)
+    expect(parseTaogubaDate("12-31 23:50", newYear)).toBe(CST(12, 31, 23, 50, 2025))
+    expect(parseTaogubaDate("01-01 00:10", newYear)).toBe(CST(1, 1, 0, 10))
+    expect(parseTaogubaDate("01-01 00:20", newYear)).toBe(CST(1, 1, 0, 20, 2025))
+    // 北京时间的年份与 UTC 不同的那几个小时：UTC 还是 12 月 31 日 16:30，北京已是 1 月 1 日 00:30
+    expect(parseTaogubaDate("01-01 00:25", CST(1, 1, 0, 30))).toBe(CST(1, 1, 0, 25))
     expect(parseTaogubaDate("昨天", now)).toBeUndefined()
     expect(parseTaogubaDate("", now)).toBeUndefined()
   })
