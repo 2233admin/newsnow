@@ -72,10 +72,21 @@ async function mapLimit<T>(list: T[], limit: number, fn: (item: T) => Promise<vo
   await Promise.all(workers)
 }
 
+export interface ResolvedSources {
+  sources: SourceMetas
+  getters: SourceGetters
+}
+
 export interface CollectorDeps {
   store: ObservationStore
-  getters: SourceGetters
-  sources: SourceMetas
+  /** 固定的源表（测试用）；与 resolve 二选一 */
+  getters?: SourceGetters
+  sources?: SourceMetas
+  /**
+   * 每一轮开始时取当前的源表（运行时注册表，见 server/registry/registry.ts）：
+   * 用户源在两轮之间增删改启停，下一轮就生效，不用重启。
+   */
+  resolve?: () => Promise<ResolvedSources>
   config: CollectorConfig
   /** 测试里注入；默认 Date.now */
   clock?: () => number
@@ -83,13 +94,15 @@ export interface CollectorDeps {
 }
 
 export function createCollector(deps: CollectorDeps) {
-  const { store, getters, sources, config } = deps
+  const { store, config } = deps
+  const resolve: () => Promise<ResolvedSources> = deps.resolve
+    ?? (async () => ({ sources: deps.sources ?? {}, getters: deps.getters ?? {} }))
   const clock = deps.clock ?? Date.now
   const log = deps.log ?? logger
   let running: Promise<TickSummary> | undefined
   let lastPurgeAt: number | undefined
 
-  async function collectOne(sourceId: string, attemptAt: number): Promise<TickFailure | undefined> {
+  async function collectOne(getters: SourceGetters, sourceId: string, attemptAt: number): Promise<TickFailure | undefined> {
     try {
       const raw = await withTimeout(() => getters[sourceId]!(), config.sourceTimeoutMs)
       const rows = toObservedRows(Array.isArray(raw) ? raw : [], config.maxItemsPerSource)
@@ -108,6 +121,7 @@ export function createCollector(deps: CollectorDeps) {
 
   async function run(): Promise<TickSummary> {
     const startedAt = clock()
+    const { sources, getters } = await resolve()
     const ids = collectableSourceIds(sources, getters, config.only)
     const health = new Map((await store.getHealth()).map(h => [h.sourceId, h]))
     const due = ids
@@ -118,7 +132,7 @@ export function createCollector(deps: CollectorDeps) {
     const failed: TickFailure[] = []
     const succeeded: string[] = []
     await mapLimit(due, config.concurrency, async (id) => {
-      const failure = await collectOne(id, startedAt)
+      const failure = await collectOne(getters, id, startedAt)
       if (failure) failed.push(failure)
       else succeeded.push(id)
     })

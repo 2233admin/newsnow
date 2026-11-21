@@ -61,6 +61,8 @@ export interface RSSHubOption {
 export interface SourceOption {
   // default: false
   hiddenDate?: boolean
+  /** 自定义抓取（用户源注入带 SSRF 防护的实现）；不传走 myFetch */
+  fetchText?: (url: string) => Promise<string>
 }
 
 export type SourceGetter = () => Promise<NewsItem[]>

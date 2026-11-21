@@ -2,7 +2,7 @@ import process from "node:process"
 import { getObservationStore } from "#/collector/runtime"
 import { readCollectorConfig } from "#/collector/config"
 import { getHealthReport } from "#/collector/health"
-import { getters } from "#/getters"
+import { getRegistry } from "#/registry/runtime"
 
 /**
  * 采集健康（只读）：每个源最近成功时间、连续失败次数、最近错误。
@@ -11,6 +11,7 @@ import { getters } from "#/getters"
 export default defineEventHandler(async () => {
   const config = readCollectorConfig(process.env)
   const store = await getObservationStore()
+  const { sources, getters } = await (await getRegistry()).snapshot()
   return {
     enabled: config.enabled,
     now: Date.now(),
