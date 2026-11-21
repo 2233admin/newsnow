@@ -163,7 +163,6 @@ describe("游标翻页：不重复、不遗漏", () => {
   it("一万条灌入后从头翻到底：每页 200 条，无重复、无遗漏，与按键排序的期望完全一致", async () => {
     const w = await feedWorld()
     const sources = ["jin10", "hackernews", "weibo", "user:a", "user:b"]
-    w.state.descs.push({ id: "user:a", name: "a", category: "x", builtin: false, enabled: true }, { id: "user:b", name: "b", category: "x", builtin: false, enabled: true })
     const expected: { feedTs: number, key: string, sourceId: string, itemId: string }[] = []
     let n = 0
     for (let batch = 0; batch < 100; batch++) {

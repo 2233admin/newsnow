@@ -43,17 +43,21 @@ describe("入库时的新条目通知（SSE 的来源）", () => {
     expect(new Set(seqs).size).toBe(750)
   })
 
-  it("seq 单调：同一条目更新不改 seq，新条目永远比旧的大", async () => {
+  it("seq 单调且不空涨：同一条目更新不改 seq、也不耗号，新条目永远比旧的大", async () => {
     const w = await feedWorld()
     await ingest(w, "jin10", [row("a")], T0)
     await ingest(w, "weibo", [row("a")], T0 + 1)
     await ingest(w, "jin10", [row("a", { title: "改" }), row("z")], T0 + 2)
     const items = (await w.service.query({})).items.sort((a, b) => a.seq - b.seq)
-    // 更新一条已有的也会耗掉一个 AUTOINCREMENT 值（SQLite 先分配再判冲突），所以 seq 之间可以有空洞，只保证单调
-    expect(items.map(i => [i.sourceId, i.itemId])).toEqual([["jin10", "a"], ["weibo", "a"], ["jin10", "z"]])
-    expect(items[0].seq).toBe(1)
-    expect(items[1].seq).toBe(2)
-    expect(items[2].seq).toBeGreaterThan(2)
+    // 重复采集不耗号：INSERT … ON CONFLICT DO UPDATE 会耗掉 AUTOINCREMENT 值，seq 会随采集次数空涨，补发上限就没意义了
+    expect(items.map(i => [i.sourceId, i.itemId, i.seq])).toEqual([["jin10", "a", 1], ["weibo", "a", 2], ["jin10", "z", 3]])
+    // 把同样 200 条再采 50 次，库里最大的 seq 不动
+    const rows = Array.from({ length: 200 }, (_, i) => row(`r${i}`))
+    await ingest(w, "hackernews", rows, T0 + 10)
+    const head = await w.feedStore.latestSeq()
+    for (let k = 1; k <= 50; k++) await ingest(w, "hackernews", rows.map(r => ({ ...r, title: `${r.title} v${k}` })), T0 + 10 + k)
+    expect(await w.feedStore.latestSeq()).toBe(head)
+    expect((await w.service.query({ source: "hackernews", limit: 1 })).items[0].title).toContain("v50")
   })
 })
 

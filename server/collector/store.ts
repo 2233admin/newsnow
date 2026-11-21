@@ -23,6 +23,10 @@ const ITEM_COLUMNS = 8
 const OBSERVATION_COLUMNS = 5
 const ITEM_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / ITEM_COLUMNS)
 const OBSERVATION_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / OBSERVATION_COLUMNS)
+/** 查已有条目：source_id 占 1 个参数，其余给 item_id。 */
+const EXISTS_IDS_PER_STATEMENT = D1_MAX_PARAMS - 1
+/** 批量更新已有条目：每行 4 个参数，另有 last_seen_at 与 source_id 两个。 */
+const UPDATE_ROWS_PER_STATEMENT = Math.floor((D1_MAX_PARAMS - 2) / 4)
 
 /**
  * 错误信息里的 URL 只留 origin + path：查询串里可能有 token、签名或 cookie 参数，不该落库、也不该经健康接口出去。
@@ -268,17 +272,35 @@ export class ObservationStore {
    */
   async recordObservations(sourceId: string, rows: ObservedRow[], observedAt: number): Promise<IngestedItem[]> {
     const fresh = await this.serialized(async () => {
-      for (const part of chunk(rows, ITEM_ROWS_PER_STATEMENT)) {
+      // 已有的与新的分开写：对已有条目做 INSERT … ON CONFLICT DO UPDATE 也会耗掉一个 AUTOINCREMENT 值，
+      // 而每个源每轮都会把榜上的老条目再写一遍，seq 会以「条目数 × 采集次数」的速度空涨，补发上限（feed/stream.ts）就失去意义。
+      const existing = new Set<string>()
+      for (const part of chunk(rows, EXISTS_IDS_PER_STATEMENT)) {
+        const found = rowsOf<{ item_id: string }>(await this.db.prepare(`
+          SELECT item_id FROM items WHERE source_id = ? AND item_id IN (${Array.from({ length: part.length }, () => "?").join(",")})
+        `).all(sourceId, ...part.map(r => r.itemId)))
+        for (const f of found) existing.add(f.item_id)
+      }
+      for (const part of chunk(rows.filter(r => !existing.has(r.itemId)), ITEM_ROWS_PER_STATEMENT)) {
         const params = part.flatMap(r => [sourceId, r.itemId, r.title, r.url, r.pubDate, observedAt, observedAt, feedTimestamp(r.pubDate, observedAt)])
+        // DO NOTHING：别的进程在查与写之间抢先写了同一条时不报错（那一条按它的写入为准）
         await this.db.prepare(`
           INSERT INTO items (source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at, feed_ts)
           VALUES ${placeholders(ITEM_COLUMNS, part.length)}
-          ON CONFLICT (source_id, item_id) DO UPDATE SET
-            title = excluded.title,
-            url = COALESCE(excluded.url, items.url),
-            pub_date = COALESCE(excluded.pub_date, items.pub_date),
-            last_seen_at = excluded.last_seen_at
+          ON CONFLICT (source_id, item_id) DO NOTHING
         `).run(...params)
+      }
+      for (const part of chunk(rows.filter(r => existing.has(r.itemId)), UPDATE_ROWS_PER_STATEMENT)) {
+        const params = part.flatMap(r => [r.itemId, r.title, r.url, r.pubDate])
+        await this.db.prepare(`
+          WITH v (item_id, title, url, pub_date) AS (VALUES ${placeholders(4, part.length)})
+          UPDATE items SET
+            title = v.title,
+            url = COALESCE(v.url, items.url),
+            pub_date = COALESCE(v.pub_date, items.pub_date),
+            last_seen_at = ?
+          FROM v WHERE items.source_id = ? AND items.item_id = v.item_id
+        `).run(...params, observedAt, sourceId)
       }
       // 这一批里第一次出现的 = first_seen_at 等于本次 observedAt 的（走 idx_items_first_seen）。
       // 同一批重试会再取到同一批，seq 不变，客户端按 seq 去重。

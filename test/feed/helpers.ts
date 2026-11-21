@@ -25,6 +25,8 @@ export function descriptors(over: SourceDescriptor[] = []): SourceDescriptor[] {
     { id: "jin10", name: "金十数据", category: "finance", builtin: true, enabled: true },
     { id: "hackernews", name: "Hacker News", category: "tech", builtin: true, enabled: true },
     { id: "weibo", name: "微博 实时热搜", category: "china", builtin: true, enabled: true },
+    { id: "user:a", name: "用户源 a", category: "mine", builtin: false, enabled: true },
+    { id: "user:b", name: "用户源 b", category: "mine", builtin: false, enabled: true },
     ...over,
   ]
 }
