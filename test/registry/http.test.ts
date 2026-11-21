@@ -25,9 +25,40 @@ describe("checkAccess：对端地址（接口只给本机用）", () => {
     for (const h of ["x-forwarded-for", "forwarded", "x-real-ip"]) expect(status(req({ headers: { [h]: "1.2.3.4" } })), h).toBe(403)
   })
 
-  it("环境变量 USER_SOURCES_ALLOW_REMOTE=true 才放开对端、Host、Origin 检查", () => {
-    expect(status(req({ remoteAddress: "8.8.8.8", headers: { host: "x.example", origin: "https://x.example" } }), { USER_SOURCES_ALLOW_REMOTE: "true" })).toBeUndefined()
-    expect(status(req({ remoteAddress: "8.8.8.8" }), { USER_SOURCES_ALLOW_REMOTE: "1" })).toBe(403)
+  it("没设令牌时，带任何 Authorization 的非本机请求也拒绝", () => {
+    expect(status(req({ remoteAddress: "8.8.8.8", headers: { authorization: "Bearer anything" } }))).toBe(403)
+    expect(status(req({ remoteAddress: "8.8.8.8", headers: { authorization: "Bearer " } }), { USER_SOURCES_TOKEN: "" })).toBe(403)
+  })
+
+  it("旧开关 USER_SOURCES_ALLOW_REMOTE 已移除，不再有任何作用", () => {
+    expect(status(req({ remoteAddress: "8.8.8.8" }), { USER_SOURCES_ALLOW_REMOTE: "true" })).toBe(403)
+  })
+})
+
+describe("checkAccess：USER_SOURCES_TOKEN（设了令牌才允许非本机访问）", () => {
+  const env = { USER_SOURCES_TOKEN: "s3cret-token-0123456789" }
+  const remote = (authorization?: string, extra: Record<string, string> = {}) =>
+    req({ remoteAddress: "172.17.0.1", headers: { host: "news.internal:3121", ...(authorization ? { authorization } : {}), ...extra } })
+
+  it("带正确的 Bearer 令牌放行（对端、Host、转发头都不再限制，反向代理 / docker 网桥可用）", () => {
+    expect(status(remote("Bearer s3cret-token-0123456789"), env)).toBeUndefined()
+    expect(status(remote("bearer s3cret-token-0123456789", { "x-forwarded-for": "1.2.3.4" }), env)).toBeUndefined()
+  })
+
+  it("缺令牌、令牌错、前缀长度不同、不是 Bearer 方案都拒绝", () => {
+    for (const a of [undefined, "Bearer wrong", "Bearer s3cret-token-0123456780", "Bearer s3cret-token-01234567890", "Bearer s3cret", "Bearer ", "Basic czNjcmV0LXRva2VuLTAxMjM0NTY3ODk=", "s3cret-token-0123456789"])
+      expect(status(remote(a), env), String(a)).toBe(403)
+  })
+
+  it("令牌通过也要遵守写接口只收 JSON", () => {
+    expect(status({ ...remote("Bearer s3cret-token-0123456789"), method: "POST" }, env)).toBe(415)
+    expect(status({ ...remote("Bearer s3cret-token-0123456789", { "content-type": "application/json" }), method: "POST" }, env)).toBeUndefined()
+  })
+
+  it("设了令牌不影响本机访问：本机仍无需令牌，Host / Origin 检查照旧", () => {
+    expect(status(req(), env)).toBeUndefined()
+    expect(status(req({ headers: { host: "attacker-rebind.example" } }), env)).toBe(403)
+    expect(status(req({ headers: { origin: "https://evil.example" } }), env)).toBe(403)
   })
 })
 

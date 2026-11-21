@@ -1,4 +1,5 @@
 import process from "node:process"
+import { createHash, timingSafeEqual } from "node:crypto"
 import type { H3Event } from "h3"
 import { InputError } from "./spec"
 
@@ -18,7 +19,11 @@ import { InputError } from "./spec"
  *
  * 为什么不复用 auth.ts 的 JWT：#2183 定了用户订阅源存在工作台本地、不用 newsnow 的 GitHub 登录；
  * auth.ts 对 /api/collector 的处理只是「未配登录时放行」（与 health 相同），并没有鉴权。
- * USER_SOURCES_ALLOW_REMOTE=true 关闭第 1–3 项（只在自己在前面加了认证时才用）；第 4 项始终生效。
+ *
+ * 非本机访问（docker 里宿主机访问容器时对端是网桥地址，如 172.17.0.1，不是回环）只有一条路：设置
+ * USER_SOURCES_TOKEN=<随机串>，请求带 `Authorization: Bearer <令牌>`（常量时间比较）。令牌通过后不再查对端、Host、转发头
+ * （这些请求本来就不是本机的）；第 4 项照常生效。没设令牌就只给本机。令牌是唯一的凭据：泄露等于对所有能连上端口的人开放，
+ * 请用 32 位以上的随机串，并只在受信任的网络里暴露端口。
  */
 export interface AccessRequest {
   remoteAddress: string | undefined
@@ -51,10 +56,18 @@ function isLoopback(address: string) {
   return address === "::1" || /^127\./.test(address) || /^::ffff:127\./i.test(address)
 }
 
+/** 先各取 SHA-256 再 timingSafeEqual：长度不同也不会提前返回，不泄露令牌长度。 */
+function tokenMatches(authorization: string | undefined, token: string) {
+  const presented = /^Bearer\s+(\S+)$/i.exec(authorization ?? "")?.[1]
+  if (!presented) return false
+  return timingSafeEqual(createHash("sha256").update(presented).digest(), createHash("sha256").update(token).digest())
+}
+
 /** 通过返回 undefined，否则返回该给的状态码与原因。 */
 export function checkAccess(req: AccessRequest, env: Record<string, string | undefined> = process.env): AccessDenied | undefined {
   const { headers } = req
-  if (env.USER_SOURCES_ALLOW_REMOTE !== "true") {
+  const token = env.USER_SOURCES_TOKEN
+  if (!(token && tokenMatches(headerOf(headers, "authorization"), token))) {
     if (!req.remoteAddress || !isLoopback(req.remoteAddress) || ["x-forwarded-for", "forwarded", "x-real-ip"].some(h => headers[h] !== undefined))
       return { status: 403, message: "用户源接口只允许本机访问" }
     const host = headerOf(headers, "host")
