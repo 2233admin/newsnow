@@ -124,6 +124,15 @@ describe("observationStore", () => {
     expect(h.lastError).not.toContain("SECRET")
   })
 
+  it("items.url 不会被之后的空值覆盖", async () => {
+    const { store } = await memoryStore()
+    await store.recordObservations("s", toObservedRows([{ id: "a", title: "甲", url: "u/a" }], 200), 1000)
+    await store.recordObservations("s", toObservedRows([{ id: "a", title: "甲", url: "" }], 200), 2000)
+    expect((await store.getItemHistory("s", "a"))?.item.url).toBe("u/a")
+    await store.recordObservations("s", toObservedRows([{ id: "a", title: "甲", url: "u/new" }], 200), 3000)
+    expect((await store.getItemHistory("s", "a"))?.item.url).toBe("u/new")
+  })
+
   it("错误信息过长会截断", async () => {
     const { store } = await memoryStore()
     await store.recordFailure("s", 1, new Error("x".repeat(5000)))

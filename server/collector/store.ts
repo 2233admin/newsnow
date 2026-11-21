@@ -186,7 +186,7 @@ export class ObservationStore {
         VALUES ${placeholders(ITEM_COLUMNS, part.length)}
         ON CONFLICT (source_id, item_id) DO UPDATE SET
           title = excluded.title,
-          url = excluded.url,
+          url = COALESCE(excluded.url, items.url),
           pub_date = COALESCE(excluded.pub_date, items.pub_date),
           last_seen_at = excluded.last_seen_at
       `).run(...params)
