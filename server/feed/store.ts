@@ -78,6 +78,36 @@ function rangeWhere(filter: FeedFilter, cursor?: FeedCursor) {
   return { where, params }
 }
 
+/**
+ * 「范围」条件（来源集合、关键词、时间），写在别名 m 的 items 行上：定组的代表行时，组里别的条目也要满足同样的范围才算「更早的」。
+ * 游标是位置不是范围，不在里面；标的按组命中（见 rowWhere），也不在里面。
+ */
+function memberScope(filter: FeedFilter) {
+  const where: string[] = []
+  const params: Primitive[] = []
+  if (filter.sourceIds) {
+    where.push(`m.source_id IN (SELECT value FROM json_each(?))`)
+    params.push(JSON.stringify(filter.sourceIds))
+  }
+  for (const term of filter.keywords) {
+    where.push(`(m.title LIKE ? ESCAPE '\\' OR m.clean_title LIKE ? ESCAPE '\\')`)
+    params.push(`%${escapeLike(term)}%`, `%${escapeLike(term)}%`)
+  }
+  if (filter.from !== undefined) {
+    where.push(`m.feed_ts >= ?`)
+    params.push(filter.from)
+  }
+  if (filter.to !== undefined) {
+    where.push(`m.feed_ts < ?`)
+    params.push(filter.to)
+  }
+  if (filter.since !== undefined) {
+    where.push(`m.first_seen_at >= ?`)
+    params.push(filter.since)
+  }
+  return { where, params }
+}
+
 /** 过滤条件（来源集合、关键词）：只能逐行判断。 */
 function rowWhere(filter: FeedFilter) {
   const where: string[] = []
@@ -92,13 +122,13 @@ function rowWhere(filter: FeedFilter) {
     params.push(`%${escapeLike(term)}%`, `%${escapeLike(term)}%`)
   }
   if (!filter.expand) {
-    if (filter.sourceIds) {
-      // 先按来源范围筛、再在范围里收拢：组的代表行 = 范围内 seq 最小的那条。主条目在范围里它就是代表；
+    const scope = memberScope(filter)
+    if (scope.where.length) {
+      // 先按范围（来源 / 关键词 / 时间）筛、再在范围里收拢：组的代表行 = 范围内 seq 最小的那条。主条目在范围里它就是代表；
       // 不在，范围里最早的成员是代表（后到的成员 seq 只会更大，代表定下后不再变，游标稳定）。
       where.push(`(items.dup_of IS NULL OR NOT EXISTS (
-        SELECT 1 FROM items m WHERE (m.seq = items.dup_of OR m.dup_of = items.dup_of) AND m.seq < items.seq
-          AND m.source_id IN (SELECT value FROM json_each(?))))`)
-      params.push(JSON.stringify(filter.sourceIds))
+        SELECT 1 FROM items m WHERE (m.seq = items.dup_of OR m.dup_of = items.dup_of) AND m.seq < items.seq AND ${scope.where.join(" AND ")}))`)
+      params.push(...scope.params)
     } else {
       where.push(`items.dup_of IS NULL`)
     }
@@ -176,6 +206,18 @@ export class FeedStore {
   /** 这些主条目 seq 的组（SSE 的 merge 事件要来源数）。 */
   groups(mainSeqs: number[]): Promise<Map<number, GroupInfo>> {
     return this.enrich.groups(mainSeqs)
+  }
+
+  /**
+   * SSE 用：这个组（主条目 seq = groupId）里有没有比 beforeSeq 更早的、满足订阅范围（来源、关键词）的条目，
+   * 有就说明客户端已经见过这个组的代表行，新成员只推 merge。
+   */
+  async earlierInScope(groupId: number, beforeSeq: number, filter: Pick<FeedFilter, "sourceIds" | "keywords">): Promise<boolean> {
+    const scope = memberScope({ ...filter, symbols: [], expand: false })
+    const row = await this.db.prepare(`
+      SELECT 1 AS hit FROM items m WHERE (m.seq = ? OR m.dup_of = ?) AND m.seq < ? ${scope.where.length ? `AND ${scope.where.join(" AND ")}` : ""} LIMIT 1
+    `).get(groupId, groupId, beforeSeq, ...scope.params)
+    return !!row
   }
 
   /** seq 大于 after 的条目，按 seq 升序（SSE 补发用）。 */

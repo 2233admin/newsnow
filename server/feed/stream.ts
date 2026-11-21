@@ -43,7 +43,7 @@ export type StreamEvent =
 
 export interface StreamDeps {
   store: Pick<ObservationStore, "onIngest">
-  feed: Pick<FeedStore, "latestSeq" | "after" | "groups">
+  feed: Pick<FeedStore, "latestSeq" | "after" | "groups" | "earlierInScope">
   describe: () => Promise<SourceDescriptor[]>
 }
 
@@ -68,7 +68,6 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
       const descs = await deps.describe()
       const match = streamMatcher(params, descs)
       const scope = resolveScope(params, descs)
-      const allowed = scope ? new Set(scope) : undefined
       const byId = new Map(descs.map(d => [d.id, d]))
       const fresh = [...items].sort((a, b) => a.seq - b.seq).filter(item => item.seq > lastSent)
       // 一批一次读出这些条目所在组的来源数与成员
@@ -79,8 +78,9 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
         if (!match(item)) continue
         const group = groups.get(item.dupOf ?? item.seq)
         // 默认模式的代表行规则与 GET /api/feed 一致：订阅范围里组的第一条（seq 最小）是代表，推 item；
-        // 范围里已经有更早的条目（客户端见过它）才推 merge。范围外的主条目不算，所以按来源订阅不会收到指向没见过的行的 merge。
-        const earlier = !!group && Object.entries(group.firstSeqBySource as Record<string, number>).some(([s, q]) => q < item.seq && (!allowed || allowed.has(s)))
+        // 范围（来源 / 分类 / 停用 / 关键词）里已经有更早的条目（客户端见过它）才推 merge。范围外的主条目不算，所以按来源订阅不会收到指向没见过的行的 merge。
+        const earlier = item.dupOf !== null && !params.expand
+          && await deps.feed.earlierInScope(item.dupOf, item.seq, { sourceIds: scope, keywords: params.keywords })
         if (item.dupOf !== null && !params.expand && earlier) {
           emit({ type: "merge", seq: item.seq, groupId: item.dupOf, sourceId: item.sourceId, sourcesCount: group?.sourcesCount ?? 1 })
         } else {
