@@ -24,7 +24,8 @@
     "log": "wrangler pages deployment tail --project-name newsnow",
     "test": "vitest -c vitest.config.ts",
     "collector:check": "tsx ./scripts/collector-check.ts",
-    "feed:check": "tsx ./scripts/feed-check.ts"
+    "feed:check": "tsx ./scripts/feed-check.ts",
+    "sources:patrol": "tsx ./scripts/sources-patrol.ts"
   },
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "^1.7.7",
