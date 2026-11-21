@@ -142,7 +142,7 @@ function buildRawGetter(spec: UserSourceSpec, fetchText: FetchText): SourceGette
     case "rss":
       return defineRSSSource(spec.url, { fetchText })
     case "rsshub":
-      return defineRSSHubSource(spec.route, spec.limit ? { limit: spec.limit } : undefined)
+      return defineRSSHubSource(spec.route, spec.limit ? { limit: spec.limit } : undefined, { fetchText })
     case "json":
       return async () => {
         const text = await fetchText(spec.url)

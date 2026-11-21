@@ -25,6 +25,15 @@ export function defineRSSSource(url: string, option?: SourceOption): SourceGette
 /** 用户源用的 RSSHub 实例；路由必须落在这个域名下（server/registry/spec.ts 的 checkRsshubRoute）。 */
 export const RSSHUB_BASE = "https://rsshub.rssforever.com"
 
+function parseRSSHubJSON(text: string): RSSHubResponse {
+  let data: RSSHubResponse | undefined
+  try {
+    data = JSON.parse(text)
+  } catch {}
+  if (!Array.isArray(data?.items)) throw new Error("RSSHub 返回的不是 JSON Feed")
+  return data!
+}
+
 export function defineRSSHubSource(route: string, RSSHubOptions?: RSSHubOption, sourceOption?: SourceOption): SourceGetter {
   return async () => {
     // "https://rsshub.pseudoyu.com"
@@ -37,7 +46,10 @@ export function defineRSSHubSource(route: string, RSSHubOptions?: RSSHubOption, 
     Object.entries(RSSHubOptions).forEach(([key, value]) => {
       url.searchParams.set(key, value.toString())
     })
-    const data: RSSHubResponse = await myFetch(url)
+    // 用户源注入带超时与体积上限的 fetchText（server/registry/net.ts）；内置源不传，仍走 myFetch
+    const data: RSSHubResponse = sourceOption?.fetchText
+      ? parseRSSHubJSON(await sourceOption.fetchText(url.toString()))
+      : await myFetch(url)
     return data.items.map(item => ({
       title: item.title,
       url: item.url,

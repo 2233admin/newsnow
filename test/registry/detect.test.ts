@@ -1,12 +1,8 @@
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import { FEED_ITEMS, RSS } from "./helpers"
 import { detect, discoverFeedUrl, guessJsonSpec } from "#/registry/detect"
 import { InputError } from "#/registry/spec"
 import { RSSHUB_BASE } from "#/utils/source"
-
-// RSSHub 适配器经 myFetch 出网（固定域名）；这里替换掉，不连网
-const fetchMock = vi.hoisted(() => vi.fn())
-vi.mock("#/utils/fetch", () => ({ myFetch: fetchMock }))
 
 function deps(pages: Record<string, string>) {
   return {
@@ -53,14 +49,18 @@ describe("detect", () => {
   })
 
   it("/路由 与 rsshub:// 走 RSSHub，请求落在内置的 RSSHub 域名；跳出域名的路由拒绝", async () => {
-    fetchMock.mockResolvedValue({ title: "T", items: [{ id: "1", url: "https://g.example/1", title: "仓库一", date_published: "2026-11-21T10:00:00Z" }] })
-    const r = await detect("rsshub://github/trending/daily", deps({}))
+    const hub = `${RSSHUB_BASE}/github/trending/daily?format=json&sorted=true`
+    const r = await detect("rsshub://github/trending/daily", deps({ [hub]: JSON.stringify({ title: "T", items: [{ id: "1", url: "https://g.example/1", title: "仓库一", date_published: "2026-11-21T10:00:00Z" }] }) }))
     expect(r.spec).toEqual({ kind: "rsshub", route: "/github/trending/daily" })
-    expect(String(fetchMock.mock.calls[0][0])).toBe(`${RSSHUB_BASE}/github/trending/daily?format=json&sorted=true`)
     expect(r.items[0].title).toBe("仓库一")
     await expect(detect("//evil.com/x", deps({}))).rejects.toThrow(InputError)
-    await expect(detect("rsshub://evil.com/x", deps({}))).resolves.toBeTruthy() // 路由 /evil.com/x 仍在 RSSHub 域名下
-    expect(String(fetchMock.mock.calls[1][0]).startsWith(`${RSSHUB_BASE}/evil.com/x`)).toBe(true)
+    // 路由 /evil.com/x 仍在 RSSHub 域名下：请求的是 RSSHUB_BASE/evil.com/x，而不是 evil.com
+    const asked: string[] = []
+    await expect(detect("rsshub://evil.com/x", { rsshubBase: RSSHUB_BASE, fetchText: async (u) => {
+      asked.push(u)
+      throw new Error("stop")
+    } })).rejects.toThrow()
+    expect(asked[0].startsWith(`${RSSHUB_BASE}/evil.com/x`)).toBe(true)
   })
 
   it("猜不出字段时报错", () => {

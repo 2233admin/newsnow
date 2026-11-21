@@ -5,7 +5,7 @@ import type { UserSourceConfig, UserSourceSpec } from "./spec"
  * 用户源配置表（#2185）。放在与观测库同一个库里，但 source_id 的命名空间分开：
  * 观测库里用户源的 source_id 是 `user:<slug>`，这里的主键是不带前缀的 slug。
  *
- * SQL 一律参数化，只用 SQLite 与 D1 共有的语法。每条语句参数个数固定（≤ 9），远低于 D1 的 100 个上限。
+ * SQL 一律参数化，只用 SQLite 与 D1 共有的语法。每条语句参数个数固定（≤ 8），远低于 D1 的 100 个上限。
  */
 
 export interface StoredUserSource extends UserSourceConfig {

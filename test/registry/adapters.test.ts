@@ -83,6 +83,21 @@ describe("buildGetter", () => {
     expect(items[0]).toMatchObject({ title: "新闻 0", url: "https://example.com/p/0", id: "https://example.com/p/0" })
   })
 
+  it("rsshub 也经注入的出网函数抓取（同样的超时与体积上限），请求只落在内置 RSSHub 域名", async () => {
+    const seen: string[] = []
+    const items = await buildGetter({ kind: "rsshub", route: "/github/trending/daily", limit: 5 }, async (u) => {
+      seen.push(u)
+      return JSON.stringify({ title: "T", items: [{ id: "1", url: "https://g.example/1", title: "仓库一", date_published: "2026-11-21T10:00:00Z" }] })
+    })()
+    expect(seen).toEqual(["https://rsshub.rssforever.com/github/trending/daily?format=json&sorted=true&limit=5"])
+    expect(items[0]).toMatchObject({ title: "仓库一", url: "https://g.example/1" })
+  })
+
+  it("rsshub 返回的不是 RSSHub 的 JSON 时给出明确错误，而不是 TypeError", async () => {
+    await expect(buildGetter({ kind: "rsshub", route: "/x" }, async () => "<html>blocked</html>")()).rejects.toThrow("RSSHub 返回的不是 JSON Feed")
+    await expect(buildGetter({ kind: "rsshub", route: "/x" }, async () => JSON.stringify({ error: "boom" }))()).rejects.toThrow("RSSHub 返回的不是 JSON Feed")
+  })
+
   it("json 响应不是 JSON 时给出明确错误", async () => {
     const getter = buildGetter({ kind: "json", url: "https://a.com/x", itemsPath: "", fields: { title: "t", url: "u" } }, async () => "<html>")
     await expect(getter()).rejects.toThrow("响应不是合法的 JSON")
