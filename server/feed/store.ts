@@ -45,13 +45,10 @@ function rowsOf<T>(res: unknown): T[] {
 
 const escapeLike = (term: string) => term.replace(/[\\%_]/g, c => `\\${c}`)
 
-export function buildWhere(filter: FeedFilter, cursor?: FeedCursor) {
+/** 范围条件（时间、游标）：这些能直接用 idx_items_feed 定位。 */
+function rangeWhere(filter: FeedFilter, cursor?: FeedCursor) {
   const where: string[] = []
   const params: Primitive[] = []
-  if (filter.sourceIds) {
-    where.push(`source_id IN (SELECT value FROM json_each(?))`)
-    params.push(JSON.stringify(filter.sourceIds))
-  }
   if (filter.from !== undefined) {
     where.push(`feed_ts >= ?`)
     params.push(filter.from)
@@ -64,19 +61,42 @@ export function buildWhere(filter: FeedFilter, cursor?: FeedCursor) {
     where.push(`first_seen_at >= ?`)
     params.push(filter.since)
   }
-  for (const term of filter.keywords) {
-    where.push(`title LIKE ? ESCAPE '\\'`)
-    params.push(`%${escapeLike(term)}%`)
-  }
   if (cursor) {
     where.push(`(feed_ts, source_id, item_id) < (?, ?, ?)`)
     params.push(cursor.feedTs, cursor.sourceId, cursor.itemId)
   }
-  return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", params }
+  return { where, params }
 }
 
+/** 过滤条件（来源集合、关键词）：只能逐行判断。 */
+function rowWhere(filter: FeedFilter) {
+  const where: string[] = []
+  const params: Primitive[] = []
+  if (filter.sourceIds) {
+    where.push(`source_id IN (SELECT value FROM json_each(?))`)
+    params.push(JSON.stringify(filter.sourceIds))
+  }
+  for (const term of filter.keywords) {
+    where.push(`title LIKE ? ESCAPE '\\'`)
+    params.push(`%${escapeLike(term)}%`)
+  }
+  return { where, params }
+}
+
+const clause = (where: string[]) => where.length ? `WHERE ${where.join(" AND ")}` : ""
+const ORDER = `ORDER BY feed_ts DESC, source_id DESC, item_id DESC`
+
+/**
+ * 先在最新的 SCAN_WINDOW 行里找：沿 idx_items_feed 倒着读，边读边过滤，凑够一页就停。
+ * 不这样做的话，来源集合一进 WHERE，SQLite 会改成「按来源索引取出这些源的全部行再整体排序」，
+ * 耗时随库的大小线性涨（实测 20 万条时首屏 34 ms，10 万条以上就会超 200 ms 的目标；1 万条 3 ms）。
+ * 窗口里凑不够一页（过滤条件很窄、或真的到底了）才用不限窗口的整查询兜底，兜底只在这种少见的情况下付代价。
+ * 窗口大小待定：2000 行读一遍在毫秒级，默认全量来源下一页 50 条通常在前几百行里就凑够。
+ */
+export const SCAN_WINDOW = 2000
+
 export class FeedStore {
-  constructor(private db: Database) {}
+  constructor(private db: Database, private scanWindow = SCAN_WINDOW) {}
 
   /** 目前已分配的最大 seq，没有条目是 0。 */
   async latestSeq(): Promise<number> {
@@ -86,12 +106,24 @@ export class FeedStore {
 
   async page(filter: FeedFilter, limit: number, cursor?: FeedCursor): Promise<FeedPage> {
     if (filter.sourceIds && !filter.sourceIds.length) return { rows: [], hasMore: false }
-    const { sql, params } = buildWhere(filter, cursor)
-    const rows = rowsOf<Record<string, any>>(await this.db.prepare(`
-      SELECT ${ITEM_SELECT} FROM items ${sql}
-      ORDER BY feed_ts DESC, source_id DESC, item_id DESC
-      LIMIT ?
-    `).all(...params, limit + 1))
+    const range = rangeWhere(filter, cursor)
+    const row = rowWhere(filter)
+    const run = async (sql: string, params: Primitive[]) => rowsOf<Record<string, any>>(await this.db.prepare(sql).all(...params))
+    let rows: Record<string, any>[] = []
+    let done = false
+    if (row.where.length) {
+      rows = await run(`
+        SELECT ${ITEM_SELECT} FROM (
+          SELECT ${ITEM_SELECT} FROM items ${clause(range.where)} ${ORDER} LIMIT ${this.scanWindow}
+        ) ${clause(row.where)} ${ORDER} LIMIT ?
+      `, [...range.params, ...row.params, limit + 1])
+      done = rows.length > limit
+    }
+    if (!done) {
+      rows = await run(`
+        SELECT ${ITEM_SELECT} FROM items ${clause([...range.where, ...row.where])} ${ORDER} LIMIT ?
+      `, [...range.params, ...row.params, limit + 1])
+    }
     return { rows: rows.slice(0, limit).map(itemFromRow), hasMore: rows.length > limit }
   }
 

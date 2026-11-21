@@ -23,7 +23,8 @@
     "prepare": "simple-git-hooks",
     "log": "wrangler pages deployment tail --project-name newsnow",
     "test": "vitest -c vitest.config.ts",
-    "collector:check": "tsx ./scripts/collector-check.ts"
+    "collector:check": "tsx ./scripts/collector-check.ts",
+    "feed:check": "tsx ./scripts/feed-check.ts"
   },
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "^1.7.7",

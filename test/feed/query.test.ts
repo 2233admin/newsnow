@@ -222,6 +222,36 @@ describe("游标翻页：不重复、不遗漏", () => {
     expect(seen).toContain(`hackernews/n0-deep`)
   })
 
+  it("过滤条件很窄时（目标源的条目都在扫描窗口之外）退回整查询，结果仍然完整；宽的过滤只扫窗口", async () => {
+    const w = await feedWorld()
+    const { FeedStore } = await import("#/feed/store")
+    const { createFeedService } = await import("#/feed/service")
+    const small = createFeedService({ store: new FeedStore(w.db, 100), describe: async () => w.state.descs })
+    await ingest(w, "weibo", Array.from({ length: 5 }, (_, i) => row(`rare${i}`, { pubDate: T0 - 10_000_000 - i })), T0)
+    for (let b = 0; b < 3; b++) await ingest(w, "jin10", Array.from({ length: 100 }, (_, i) => row(`c${b}-${i}`, { pubDate: T0 - (b * 100 + i) * 10 })), T0)
+    const statements: string[] = []
+    const orig = w.db.prepare.bind(w.db)
+    w.db.prepare = ((sql: string) => {
+      statements.push(sql)
+      return orig(sql)
+    }) as typeof w.db.prepare
+    const rare = await small.query({ source: "weibo" })
+    expect(rare.items.map(keyOf)).toEqual(["weibo/rare0", "weibo/rare1", "weibo/rare2", "weibo/rare3", "weibo/rare4"])
+    expect(statements.filter(q => q.includes("ORDER BY"))).toHaveLength(2) // 窗口里没凑够 → 整查询
+    statements.length = 0
+    const wide = await small.query({ source: "jin10", limit: 50 })
+    expect(wide.items).toHaveLength(50)
+    expect(wide.nextCursor).toBeTruthy()
+    expect(statements.filter(q => q.includes("ORDER BY"))).toHaveLength(1) // 窗口里凑够一页，不用整查询
+    // 与不带窗口的结果逐条一致
+    const full = await w.service.query({ source: "jin10", limit: 50 })
+    expect(wide.items).toEqual(full.items)
+    const pagesSmall = await pageAll(small, { source: "jin10,weibo", limit: 40 })
+    const pagesFull = await pageAll(w.service, { source: "jin10,weibo", limit: 40 })
+    expect(pagesSmall.flatMap(p => p.items.map(keyOf))).toEqual(pagesFull.flatMap(p => p.items.map(keyOf)))
+    expect(pagesSmall.flatMap(p => p.items)).toHaveLength(305)
+  })
+
   it("查询计划：翻页走 idx_items_feed，不对全表做临时排序", async () => {
     const w = await feedWorld()
     await ingest(w, "jin10", Array.from({ length: 50 }, (_, i) => row(`x${i}`)), T0)
