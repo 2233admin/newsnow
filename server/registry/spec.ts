@@ -34,6 +34,8 @@ export interface JsonSpec {
   url: string
   /** 条目数组所在的点路径；空串表示响应本身就是数组 */
   itemsPath: string
+  /** 条目 id 去掉结尾的版本号（`v<数字>`）：同一篇稿子修订后 id 不变，不会重复入库（arXiv 的 `…/abs/2611.1v1` → `v2`） */
+  idStripVersion?: true
   fields: {
     title: string
     url: string
@@ -51,6 +53,8 @@ export interface RuleSpec {
   url: string
   /** 每个匹配的元素是一条新闻 */
   item: string
+  /** 同 JsonSpec.idStripVersion */
+  idStripVersion?: true
   fields: {
     title: string
     url: string
@@ -177,6 +181,12 @@ function fields(raw: unknown) {
   return out
 }
 
+function stripVersion(value: unknown): { idStripVersion?: true } {
+  if (value === undefined || value === null || value === false) return {}
+  if (value !== true) throw new InputError("idStripVersion 必须是布尔值")
+  return { idStripVersion: true }
+}
+
 /** 校验并规范化一份 spec；多余的字段丢掉。 */
 export function normalizeSpec(raw: unknown, rsshubBase: string): UserSourceSpec {
   if (!raw || typeof raw !== "object") throw new InputError("spec 必须是对象")
@@ -198,6 +208,7 @@ export function normalizeSpec(raw: unknown, rsshubBase: string): UserSourceSpec 
         url: checkHttpUrl(s.url),
         itemsPath: str(s.itemsPath, "itemsPath", MAX_FIELD_EXPR, { optional: true }),
         fields: fields(s.fields),
+        ...stripVersion(s.idStripVersion),
       }
     case "rule":
       return {
@@ -205,6 +216,7 @@ export function normalizeSpec(raw: unknown, rsshubBase: string): UserSourceSpec 
         url: checkHttpUrl(s.url),
         item: str(s.item, "item 选择器", MAX_FIELD_EXPR),
         fields: fields(s.fields),
+        ...stripVersion(s.idStripVersion),
       }
     default:
       throw new InputError(`spec.kind 必须是 ${USER_SOURCE_KINDS.join(" / ")} 之一`)
