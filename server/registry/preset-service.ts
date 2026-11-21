@@ -3,7 +3,7 @@ import type { UserSourceSpec } from "./spec"
 import { presetsToOpml } from "./presets"
 import type { PresetOrigin, PresetPack, PresetSource } from "./presets"
 import type { SourceService, UserSourceView } from "./service"
-import type { HealthRecord } from "#/collector/store"
+import type { HealthRecord, ObservationStore } from "#/collector/store"
 import { RSSHUB_BASE } from "#/utils/source"
 
 /**
@@ -35,8 +35,8 @@ function sameConfig(p: PresetSource, row: UserSourceView) {
 /**
  * 预置订阅包的服务层，只用 SourceService 的公开方法（list / create / update），不碰注册表的动作逻辑。
  */
-export function createPresetService(deps: { service: SourceService, pack: PresetPack, clock?: () => number }) {
-  const { service, pack } = deps
+export function createPresetService(deps: { service: SourceService, observations: Pick<ObservationStore, "deleteHealth">, pack: PresetPack, clock?: () => number }) {
+  const { service, observations, pack } = deps
   const clock = deps.clock ?? Date.now
 
   const find = (slug: string) => {
@@ -71,7 +71,7 @@ export function createPresetService(deps: { service: SourceService, pack: Preset
       return view(p, (await rows()).get(p.slug))
     },
 
-    /** 启用：库里没有就按预置包创建（enabled），有但停用就置为启用，已启用则原样返回。 */
+    /** 启用：库里没有就按预置包创建（enabled），有但停用就置为启用并清掉健康记录（下一轮重新开始计数），已启用则原样返回。 */
     async enable(slug: string): Promise<PresetView> {
       const p = find(slug)
       const row = (await rows()).get(p.slug)
@@ -85,6 +85,8 @@ export function createPresetService(deps: { service: SourceService, pack: Preset
         }
       } else if (!row.enabled) {
         await service.update(p.slug, { enabled: true })
+        // 停用前的连续失败数不能带进新一轮：否则重新启用后到第一次采集之前，巡检会按旧数据报它
+        await observations.deleteHealth(toSourceId(p.slug))
       }
       return await presets.get(slug)
     },

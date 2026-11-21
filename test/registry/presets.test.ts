@@ -6,7 +6,8 @@ import { createRegistry } from "#/registry/registry"
 import { loadPack, parsePack, presetsToOpml } from "#/registry/presets"
 import { createPresetService } from "#/registry/preset-service"
 import { parseOpml } from "#/registry/opml"
-import { InputError } from "#/registry/spec"
+import { mapRule } from "#/registry/adapters"
+import { InputError, normalizeSpec } from "#/registry/spec"
 import { RSSHUB_BASE } from "#/utils/source"
 
 const MIN = 60_000
@@ -26,7 +27,7 @@ async function setup() {
   const registry = createRegistry({ builtinSources: { hn: { interval: 10 * MIN } }, builtinGetters: { hn: async () => [{ id: "b1", title: "内置", url: "https://b/1" }] }, store: w.store, fetchText: w.fetchText, log: quiet })
   let now = 1_000_000
   const collector = createCollector({ store: w.observations, resolve: () => registry.snapshot(), config: { enabled: true, ...COLLECTOR_DEFAULTS }, clock: () => now, log: quiet })
-  const presets = createPresetService({ service: w.service, pack })
+  const presets = createPresetService({ service: w.service, observations: w.observations, pack })
   return { ...w, registry, collector, presets, advance: (ms: number) => {
     now += ms
   } }
@@ -34,7 +35,7 @@ async function setup() {
 
 describe("预置订阅包（数据文件）", () => {
   it("随仓库的 feeds.json 通过模块 2 的全部校验，且覆盖要求的几家", () => {
-    expect(pack.sources.length).toBeGreaterThanOrEqual(17)
+    expect(pack.sources.length).toBeGreaterThanOrEqual(16)
     const names = pack.sources.map(s => s.name).join("|")
     for (const must of ["Bloomberg", "Reuters", "AP ", "TechCrunch", "arXiv", "r/wallstreetbets", "YouTube"]) expect(names).toContain(must)
     for (const s of pack.sources) {
@@ -43,6 +44,29 @@ describe("预置订阅包（数据文件）", () => {
       expect(s.origin.readAt).toMatch(/^2026-/)
     }
     expect(new Set(pack.sources.map(s => s.slug)).size).toBe(pack.sources.length)
+  })
+
+  it("路透 / 美联社的关键词限定在标题（intitle:），每个 Google News 源都带 when: 时间窗并写了实测相关率", () => {
+    const google = pack.sources.filter(s => s.origin.channel === "google-news")
+    expect(google.map(s => s.slug)).toEqual(["preset-reuters-markets", "preset-ap-markets"])
+    for (const s of google) {
+      const url = decodeURIComponent((s.spec as { url: string }).url)
+      expect(url).toMatch(/intitle:/)
+      expect(url).toMatch(/when:\d+[dh]/)
+      expect(url).not.toMatch(/\(markets OR stocks OR economy\)/)
+      expect(s.origin.note).toMatch(/相关率：2026-11-\d+ .{0,12}\d+ 条，相关 \d+ 条/)
+    }
+    // & 没编码会把后面的 when: 截断，时间窗失效
+    expect((pack.sources.find(s => s.slug === "preset-ap-markets")!.spec as { url: string }).url).not.toMatch(/S&P/)
+  })
+
+  it("reddit 的 note 只写事实（沙箱 404 / 429，未验证），不写推测", () => {
+    const reddit = pack.sources.filter(s => s.slug.startsWith("preset-reddit-"))
+    expect(reddit).toHaveLength(4)
+    for (const s of reddit) {
+      expect(s.origin.note).toContain("未验证")
+      expect(s.origin.note).not.toContain("通常可取")
+    }
   })
 
   it("坏的预置包被拒绝：slug 不以 preset- 开头、重名、没写间隔、地址不是 http", () => {
@@ -148,11 +172,27 @@ describe("启用 / 停用", () => {
     expect(items).toEqual([{ title: "Paper One", url: "https://arxiv.org/abs/2611.0001v1" }])
   })
 
+  it("停用后重新启用：停用前的连续失败数清零，不带进新一轮", async () => {
+    const w = await setup()
+    await w.presets.enable("preset-techcrunch") // 没有页面：采集必然失败
+    for (let i = 0; i < 3; i++) {
+      await w.collector.tick()
+      w.advance(31 * MIN)
+    }
+    expect((await w.presets.get("preset-techcrunch")).health).toMatchObject({ consecutiveFailures: 3 })
+    await w.presets.disable("preset-techcrunch")
+    expect((await w.presets.get("preset-techcrunch")).health).toMatchObject({ consecutiveFailures: 3 })
+    expect((await w.presets.enable("preset-techcrunch")).health).toBeNull()
+    w.advance(MIN)
+    await w.collector.tick()
+    expect((await w.presets.get("preset-techcrunch")).health).toMatchObject({ consecutiveFailures: 1 })
+  })
+
   it("未知的预置 slug 返回 404；名额满时启用报 409 而不是静默吞掉", async () => {
     const w = await setup()
     await expect(w.presets.enable("preset-nope")).rejects.toMatchObject({ status: 404 })
     await expect(w.presets.disable("bloomberg")).rejects.toMatchObject({ status: 404 })
-    const full = createPresetService({ service: { ...w.service, list: async () => [], create: async () => {
+    const full = createPresetService({ observations: w.observations, service: { ...w.service, list: async () => [], create: async () => {
       throw new InputError("用户源已达上限 200", 409)
     } } as any, pack })
     await expect(full.enable("preset-techcrunch")).rejects.toMatchObject({ status: 409, message: expect.stringContaining("上限") })
@@ -164,7 +204,38 @@ describe("启用 / 停用", () => {
       await w.service.create({ slug: "preset-techcrunch", name: "x", spec: BLOOMBERG.spec, enabled: false })
       throw new InputError("user:preset-techcrunch 已存在", 409)
     })
-    const presets = createPresetService({ service: { ...w.service, create: racing } as any, pack })
+    const presets = createPresetService({ observations: w.observations, service: { ...w.service, create: racing } as any, pack })
     expect((await presets.enable("preset-techcrunch")).state).toBe("enabled")
+  })
+})
+
+describe("arxiv：修订后同一篇不重复入库", () => {
+  const atom = (version: string, title: string) => ARXIV_ATOM.replace(/2611\.0001v1/g, `2611.0001${version}`).replace("Paper One", title)
+
+  it("两个 arXiv 预置源都开了 idStripVersion；mapRule 去掉结尾的版本号，没写 id 字段时不动", () => {
+    for (const slug of ["preset-arxiv-q-fin", "preset-arxiv-cs-ai-lg"]) expect((pack.sources.find(s => s.slug === slug)!.spec as { idStripVersion?: boolean }).idStripVersion).toBe(true)
+    const spec = pack.sources.find(s => s.slug === "preset-arxiv-q-fin")!.spec as any
+    expect(mapRule(atom("v3", "P"), spec)[0].id).toBe("http://arxiv.org/abs/2611.0001")
+    expect(mapRule(atom("v3", "P"), { ...spec, idStripVersion: undefined })[0].id).toBe("http://arxiv.org/abs/2611.0001v3")
+    expect(mapRule(atom("v3", "P"), { ...spec, fields: { title: "title", url: "link[rel=alternate]@href" } })[0].id).toBe("https://arxiv.org/abs/2611.0001v3")
+  })
+
+  it("normalizeSpec 保留 idStripVersion，拒绝非布尔值", () => {
+    const base = { kind: "rule", url: "https://a.example/x", item: "entry", fields: { title: "title", url: "link@href" } }
+    expect(normalizeSpec({ ...base, idStripVersion: true }, RSSHUB_BASE)).toMatchObject({ idStripVersion: true })
+    expect("idStripVersion" in normalizeSpec({ ...base, idStripVersion: false }, RSSHUB_BASE)).toBe(false)
+    expect(() => normalizeSpec({ ...base, idStripVersion: "yes" }, RSSHUB_BASE)).toThrow(InputError)
+  })
+
+  it("论文从 v1 修订成 v2：第二轮采集后库里仍是一条（id 不带版本号），不是两条", async () => {
+    const w = await setup()
+    await w.presets.enable("preset-arxiv-q-fin")
+    await w.collector.tick()
+    w.pages[arxivUrl] = atom("v2", "Paper One (revised)")
+    w.advance(ARXIV.interval + MIN)
+    expect((await w.collector.tick()).succeeded).toContain("user:preset-arxiv-q-fin")
+    const rows = await w.db.prepare(`SELECT item_id, title FROM items WHERE source_id = 'user:preset-arxiv-q-fin'`).all() as any[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0].item_id).toBe("http://arxiv.org/abs/2611.0001")
   })
 })
