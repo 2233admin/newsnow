@@ -116,6 +116,14 @@ describe("observationStore", () => {
     expect(h.lastError).toBe("boom again")
   })
 
+  it("错误信息里的 URL 去掉查询串与 fragment，只留 origin + path", async () => {
+    const { store } = await memoryStore()
+    await store.recordFailure("s", 1, new Error(`[GET] "https://api.example.com/v1/hot?token=SECRET&sig=abc#x": 403 Forbidden (http://b.test/p?k=v)`))
+    const [h] = await store.getHealth()
+    expect(h.lastError).toBe(`[GET] "https://api.example.com/v1/hot": 403 Forbidden (http://b.test/p)`)
+    expect(h.lastError).not.toContain("SECRET")
+  })
+
   it("错误信息过长会截断", async () => {
     const { store } = await memoryStore()
     await store.recordFailure("s", 1, new Error("x".repeat(5000)))

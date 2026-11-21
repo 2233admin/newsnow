@@ -20,6 +20,20 @@ const OBSERVATION_COLUMNS = 5
 const ITEM_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / ITEM_COLUMNS)
 const OBSERVATION_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / OBSERVATION_COLUMNS)
 
+/**
+ * 错误信息里的 URL 只留 origin + path：查询串里可能有 token、签名或 cookie 参数，不该落库、也不该经健康接口出去。
+ */
+export function stripUrlQueries(message: string) {
+  return message.replace(/https?:\/\/[^\s"'<>)]+/g, (raw) => {
+    try {
+      const u = new URL(raw)
+      return u.origin + u.pathname
+    } catch {
+      return raw.split(/[?#]/)[0]
+    }
+  })
+}
+
 /** 记在 source_health.last_error 里的最大长度，避免把整页 HTML 错误体写进库。 */
 const MAX_ERROR_LENGTH = 500
 
@@ -199,7 +213,7 @@ export class ObservationStore {
   }
 
   async recordFailure(sourceId: string, attemptAt: number, error: unknown) {
-    const message = (error instanceof Error ? error.message : String(error)).slice(0, MAX_ERROR_LENGTH)
+    const message = stripUrlQueries(error instanceof Error ? error.message : String(error)).slice(0, MAX_ERROR_LENGTH)
     await this.db.prepare(`
       INSERT INTO source_health (source_id, last_attempt_at, consecutive_failures, last_error, last_error_at)
       VALUES (?, ?, 1, ?, ?)
