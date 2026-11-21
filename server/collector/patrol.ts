@@ -174,7 +174,7 @@ export type RunGh = (args: string[]) => Promise<string>
 export interface IssueAction {
   sourceId: string
   title: string
-  action: "created" | "exists" | "reopened" | "would-create" | "would-reopen"
+  action: "created" | "exists" | "reopened" | "would-create" | "would-reopen" | "closed-still-failing" | "muted"
   number?: number
   url?: string
   labeled: boolean
@@ -193,7 +193,11 @@ interface IssueRef {
   html_url?: string
   state?: string
   closed_at?: string | null
+  labels?: string[]
 }
+
+/** 带这个标签的已关闭 issue 永不重开（人明确说「不再提醒」）。仓库里没有这个标签就没有票能带它，等于不启用。 */
+export const MUTED_LABEL = "news:muted"
 
 /** 重开时追加的评论：本次失败次数、最近错误、时间。 */
 export function reopenComment(f: FailingSource, report: Pick<PatrolReport, "generatedAtIso" | "thresholds">) {
@@ -218,12 +222,12 @@ export function reopenComment(f: FailingSource, report: Pick<PatrolReport, "gene
  * 同源 = 标题以 `[信源巡检] <源 id> ` 开头。只走 `gh api` 的 REST 路径（不用 `gh issue ...`，它走 GraphQL，在受限环境里被拒）。
  * 标签不存在就不加（GitHub 对不存在的标签会自动创建，那会悄悄建出一个没人规划的标签），在返回里标 labeled: false。
  */
-export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions): Promise<{ actions: IssueAction[], labelMissing: boolean }> {
+export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions): Promise<{ actions: IssueAction[], labelMissing: boolean, mutedLabelMissing: boolean }> {
   const { repo, label, dryRun, runGh } = opts
-  if (!report.failing.length) return { actions: [], labelMissing: false }
+  if (!report.failing.length) return { actions: [], labelMissing: false, mutedLabelMissing: false }
 
   // 开着的与关了的都要看（REST 的 /issues 也会返回 PR，用 pull_request 字段滤掉）
-  const raw = await runGh(["api", "--paginate", `repos/${repo}/issues?state=all&per_page=100`, "--jq", ".[] | select(.pull_request | not) | {number, title, html_url, state, closed_at}"])
+  const raw = await runGh(["api", "--paginate", `repos/${repo}/issues?state=all&per_page=100`, "--jq", ".[] | select(.pull_request | not) | {number, title, html_url, state, closed_at, labels: [.labels[].name]}"])
   const all: IssueRef[] = raw.split("\n").map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l))
 
   let labelMissing = false
@@ -231,6 +235,13 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
     await runGh(["api", `repos/${repo}/labels/${encodeURIComponent(label)}`, "--silent"])
   } catch {
     labelMissing = true
+  }
+
+  let mutedLabelMissing = false
+  try {
+    await runGh(["api", `repos/${repo}/labels/${encodeURIComponent(MUTED_LABEL)}`, "--silent"])
+  } catch {
+    mutedLabelMissing = true
   }
 
   const actions: IssueAction[] = []
@@ -246,6 +257,17 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
     const closed = same.filter(i => i.state === "closed")
       .sort((a, b) => Date.parse(b.closed_at ?? "") - Date.parse(a.closed_at ?? "") || b.number - a.number)[0]
     if (closed) {
+      // 人故意关掉的不重开：带静音标签的永不重开；其余的只在「关了之后这个源又成功过、现在又坏」时重开，
+      // 否则是没修好就关的（wontfix、暂时下线、等上游），重开只会每天吵一次
+      if (closed.labels?.includes(MUTED_LABEL)) {
+        actions.push({ sourceId: f.sourceId, title: closed.title, action: "muted", number: closed.number, url: closed.html_url, labeled: false })
+        continue
+      }
+      const closedAt = Date.parse(closed.closed_at ?? "")
+      if (f.lastSuccessAt === null || !(f.lastSuccessAt > closedAt)) {
+        actions.push({ sourceId: f.sourceId, title: closed.title, action: "closed-still-failing", number: closed.number, url: closed.html_url, labeled: false })
+        continue
+      }
       if (dryRun) {
         actions.push({ sourceId: f.sourceId, title: closed.title, action: "would-reopen", number: closed.number, url: closed.html_url, labeled: false })
         continue
@@ -264,5 +286,5 @@ export async function openIssues(report: PatrolReport, opts: OpenIssuesOptions):
     const created: IssueRef = JSON.parse(await runGh(args))
     actions.push({ sourceId: f.sourceId, title, action: "created", number: created.number, url: created.html_url, labeled: !labelMissing })
   }
-  return { actions, labelMissing }
+  return { actions, labelMissing, mutedLabelMissing }
 }

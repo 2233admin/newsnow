@@ -4,7 +4,7 @@
  *
  *   pnpm sources:patrol                          # JSON 报告
  *   pnpm sources:patrol --format text            # 给人看的表
- *   pnpm sources:patrol --open-issues            # 给每个坏掉的源在 XartLab/KATANAview 开 issue（已有未关闭的同源 issue 跳过；只有已关闭的就重开最近那张并追加评论）
+ *   pnpm sources:patrol --open-issues            # 给每个坏掉的源在 XartLab/KATANAview 开 issue（已有未关闭的同源 issue 跳过；只有已关闭的、且关了之后这个源又成功过，才重开最近那张并追加评论；带 news:muted 标签的永不重开）
  *   pnpm sources:patrol --open-issues --dry-run  # 只查重、只打印会开 / 重开什么，不改任何东西
  *   选项：--db <路径>（默认 .data/db.sqlite3）、--repo <owner/repo>、--label <标签>（默认 area:news）、
  *        --min-failures <n>、--min-minutes <n>、--stalled-minutes <n>
@@ -27,7 +27,7 @@ import sqlite from "db0/connectors/better-sqlite3"
 import { projectDir } from "../shared/dir"
 import _sources from "../shared/sources.json"
 import { ObservationStore } from "../server/collector/store"
-import { PATROL_DEFAULTS, buildPatrolReport, openIssues } from "../server/collector/patrol"
+import { MUTED_LABEL, PATROL_DEFAULTS, buildPatrolReport, openIssues } from "../server/collector/patrol"
 import type { PatrolSourceMeta } from "../server/collector/patrol"
 
 const sources = _sources as Record<string, PatrolSourceMeta>
@@ -90,7 +90,7 @@ if (arg("format") === "text") {
   if (report.watching.length) console.log(`\n观察（没到阈值）：\n${report.watching.map(line).join("\n")}`)
   if (report.pending.length) console.log(`\n没抓过：${report.pending.join(", ")}`)
   if (issues) {
-    console.log(`\nissue${issues.labelMissing ? `（标签 ${arg("label") ?? "area:news"} 不存在，没加标签）` : ""}：`)
+    console.log(`\nissue${issues.labelMissing ? `（标签 ${arg("label") ?? "area:news"} 不存在，没加标签）` : ""}${issues.mutedLabelMissing ? `（静音标签 ${MUTED_LABEL} 不存在，静音不生效；建了这个标签后，带它的已关闭 issue 永不重开）` : ""}：`)
     for (const a of issues.actions) console.log(`${a.action.padEnd(12)} ${a.title}${a.url ? ` ${a.url}` : ""}`)
   }
 } else {

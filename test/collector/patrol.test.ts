@@ -117,15 +117,16 @@ describe("openIssues（假的 gh）", () => {
     })
     return buildPatrolReport(health, { good: sources.good, down: sources.down }, NOW)
   }
-  function fakeGh(opts: { open?: { number: number, title: string, state?: "open" | "closed", closed_at?: string }[], labelExists?: boolean } = {}) {
+  function fakeGh(opts: { open?: { number: number, title: string, state?: "open" | "closed", closed_at?: string, labels?: string[] }[], labelExists?: boolean, mutedLabelExists?: boolean } = {}) {
     const calls: string[][] = []
     const runGh: RunGh = async (args) => {
       calls.push(args)
       if (args[1].includes("/labels/")) {
-        if (opts.labelExists === false) throw new Error("gh: Not Found (HTTP 404)")
+        const muted = args[1].includes("muted")
+        if (muted ? opts.mutedLabelExists === false : opts.labelExists === false) throw new Error("gh: Not Found (HTTP 404)")
         return ""
       }
-      if (args.includes("--paginate")) return (opts.open ?? []).map(i => JSON.stringify({ state: "open", ...i, html_url: `https://github.com/XartLab/KATANAview/issues/${i.number}` })).join("\n")
+      if (args.includes("--paginate")) return (opts.open ?? []).map(i => JSON.stringify({ state: "open", labels: [], ...i, html_url: `https://github.com/XartLab/KATANAview/issues/${i.number}` })).join("\n")
       return JSON.stringify({ number: 3001, html_url: "https://github.com/XartLab/KATANAview/issues/3001" })
     }
     return {
@@ -196,6 +197,32 @@ describe("openIssues（假的 gh）", () => {
     expect(gh.comments()).toEqual([])
   })
 
+  it("已关闭的同源 issue 关闭之后这个源没成功过（还在坏、人是没修好就关的）：不重开、不评论、不新开，标 closed-still-failing", async () => {
+    // failingReport 里 down 的最近成功是 NOW-180 分钟；这张票在它之后（NOW-60 分钟）才关
+    const gh = fakeGh({ open: [{ number: 9, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败`, state: "closed", closed_at: new Date(NOW - 60 * MIN).toISOString() }] })
+    const { actions } = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })
+    expect(actions.map(a => [a.action, a.number])).toEqual([["closed-still-failing", 9]])
+    expect(gh.reopens()).toEqual([])
+    expect(gh.comments()).toEqual([])
+    expect(gh.creates()).toEqual([])
+  })
+
+  it("带 news:muted 标签的已关闭 issue 永不重开，哪怕关了之后又成功过", async () => {
+    const gh = fakeGh({ open: [{ number: 9, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败`, state: "closed", closed_at: "2026-11-15T00:00:00Z", labels: ["area:news", "news:muted"] }] })
+    const { actions } = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })
+    expect(actions.map(a => [a.action, a.number])).toEqual([["muted", 9]])
+    expect(gh.reopens()).toEqual([])
+    expect(gh.comments()).toEqual([])
+    expect(gh.creates()).toEqual([])
+  })
+
+  it("news:muted 标签在仓库里不存在：不影响重开，并在结果里写明静音标签缺失", async () => {
+    const gh = fakeGh({ mutedLabelExists: false, open: [{ number: 9, title: `${ISSUE_TITLE_PREFIX} down 挂了的源 连续失败`, state: "closed", closed_at: "2026-11-15T00:00:00Z" }] })
+    const res = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })
+    expect(res.actions.map(a => a.action)).toEqual(["reopened"])
+    expect(res.mutedLabelMissing).toBe(true)
+  })
+
   it("标签不存在：照样创建但不加标签，并报告 labelMissing", async () => {
     const gh = fakeGh({ labelExists: false })
     const { actions, labelMissing } = await openIssues(await failingReport(), { ...base, dryRun: false, runGh: gh.runGh })
@@ -214,7 +241,7 @@ describe("openIssues（假的 gh）", () => {
   it("没有要报的源：一次 gh 都不调", async () => {
     const gh = fakeGh()
     const healthy = buildPatrolReport([], {}, NOW)
-    expect(await openIssues(healthy, { ...base, dryRun: false, runGh: gh.runGh })).toEqual({ actions: [], labelMissing: false })
+    expect(await openIssues(healthy, { ...base, dryRun: false, runGh: gh.runGh })).toEqual({ actions: [], labelMissing: false, mutedLabelMissing: false })
     expect(gh.calls).toEqual([])
   })
 })
