@@ -261,6 +261,23 @@ export const originSources = {
       },
     },
   },
+  "ths": {
+    name: "同花顺",
+    title: "快讯",
+    color: "red",
+    column: "finance",
+    type: "realtime",
+    interval: Time.Realtime,
+    home: "https://news.10jqka.com.cn/realtimenews.html",
+  },
+  "taoguba": {
+    name: "淘股吧",
+    title: "综合吧热帖",
+    color: "orange",
+    column: "finance",
+    type: "hottest",
+    home: "https://www.tgb.cn/bbs/",
+  },
   "solidot": {
     name: "Solidot",
     color: "teal",
