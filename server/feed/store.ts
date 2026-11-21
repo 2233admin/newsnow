@@ -80,7 +80,7 @@ function rangeWhere(filter: FeedFilter, cursor?: FeedCursor) {
 
 /**
  * 「范围」条件（来源集合、关键词、时间），写在别名 m 的 items 行上：定组的代表行时，组里别的条目也要满足同样的范围才算「更早的」。
- * 游标是位置不是范围，不在里面；标的按组命中（见 rowWhere），也不在里面。
+ * 游标与 since 是位置（拉新用），不是范围，不在里面：客户端已有的老组来了新成员，since 查询不该把它当新行；标的按组判断（见 rowWhere），也不在里面。
  */
 function memberScope(filter: FeedFilter) {
   const where: string[] = []
@@ -100,10 +100,6 @@ function memberScope(filter: FeedFilter) {
   if (filter.to !== undefined) {
     where.push(`m.feed_ts < ?`)
     params.push(filter.to)
-  }
-  if (filter.since !== undefined) {
-    where.push(`m.first_seen_at >= ?`)
-    params.push(filter.since)
   }
   return { where, params }
 }
@@ -140,9 +136,9 @@ function rowWhere(filter: FeedFilter) {
       where.push(`seq IN (${own})`)
       params.push(symbols)
     } else {
-      // 组里任何一条带这个标的，主条目就算命中
-      where.push(`seq IN (${own} UNION SELECT dup_of FROM items WHERE dup_of IS NOT NULL AND seq IN (${own}))`)
-      params.push(symbols, symbols)
+      // 按组判断：条目所在的组（COALESCE(dup_of, seq)）里任何一条带这个标的就算命中，代表行是成员而标的只在主条目上时也一样
+      where.push(`COALESCE(items.dup_of, items.seq) IN (SELECT COALESCE(i.dup_of, i.seq) FROM items i WHERE i.seq IN (${own}))`)
+      params.push(symbols)
     }
   }
   return { where, params }
@@ -217,6 +213,15 @@ export class FeedStore {
     const row = await this.db.prepare(`
       SELECT 1 AS hit FROM items m WHERE (m.seq = ? OR m.dup_of = ?) AND m.seq < ? ${scope.where.length ? `AND ${scope.where.join(" AND ")}` : ""} LIMIT 1
     `).get(groupId, groupId, beforeSeq, ...scope.params)
+    return !!row
+  }
+
+  /** SSE 用：这个组（主条目 seq = groupId）里任一条目带 symbols 之一。 */
+  async groupHasSymbol(groupId: number, symbols: string[]): Promise<boolean> {
+    const row = await this.db.prepare(`
+      SELECT 1 AS hit FROM item_symbols WHERE symbol IN (SELECT value FROM json_each(?))
+        AND seq IN (SELECT seq FROM items WHERE seq = ? OR dup_of = ?) LIMIT 1
+    `).get(JSON.stringify(symbols), groupId, groupId)
     return !!row
   }
 

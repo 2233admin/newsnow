@@ -143,3 +143,50 @@ describe("关键词与时间范围也先筛再收拢", () => {
     handle.close()
   })
 })
+
+// #9 审阅：since 是位置条件（与游标一样），不进范围；标的按组判断。
+describe("since 是位置条件，不进范围", () => {
+  it("拉新：老组的新成员不会被当成新的一行；since 之后才有的新组照常返回", async () => {
+    const w = await feedWorld(DESCS(), { enrich: true })
+    await ingest(w, "cls-telegraph", [row("c1", { title: FLASH, url: "https://cls.example/1" })], T0)
+    await ingest(w, "ths", [row("t1", { title: FLASH, url: "https://t.example/1" })], T0 + 5000)
+    await ingest(w, "ths", [row("n1", { title: "一条全新的、与上面无关的新闻，用来确认新组照常返回", url: "https://t.example/n" })], T0 + 6000)
+    expect((await w.service.query({ since: String(T0 + 5000) })).items.map(keyOf)).toEqual(["ths/n1"])
+    // 订阅 ths 的客户端：范围里这个组的第一条就是 t1，它本来就是新行
+    expect((await w.service.query({ since: String(T0 + 5000), source: "ths" })).items.map(keyOf)).toEqual(["ths/n1", "ths/t1"])
+  })
+})
+
+describe("标的按组判断（默认每组一行）", () => {
+  async function nvda() {
+    const w = await feedWorld(DESCS(), { enrich: true })
+    await ingest(w, "cls-telegraph", [row("c1", { title: "英伟达宣布：以军袭击加沙城一辆汽车，致3死多伤", url: "https://news.example.com/g/1" })], T0)
+    await ingest(w, "ths", [row("t1", { title: "以军袭击加沙城一辆汽车，致3死多伤，医院证实了", url: "https://news.example.com/g/1?utm_source=t" })], T0 + 1000)
+    return w
+  }
+
+  it("标的只挂在范围外的主条目上：按来源筛时代表行是成员，整组仍然出一行", async () => {
+    const w = await nvda()
+    expect((await w.service.query({ symbol: "NVDA.XNAS" })).items.map(keyOf)).toEqual(["cls-telegraph/c1"])
+    expect((await w.service.query({ symbol: "NVDA.XNAS", source: "ths" })).items.map(keyOf)).toEqual(["ths/t1"])
+    expect((await w.service.query({ symbol: "NVDA.XNAS", q: "医院证实" })).items.map(keyOf)).toEqual(["ths/t1"])
+    expect((await w.service.query({ symbol: "TSLA.XNAS", source: "ths" })).items).toEqual([])
+  })
+
+  it("expand=1 仍按条判断", async () => {
+    const w = await nvda()
+    expect((await w.service.query({ symbol: "NVDA.XNAS", expand: "1" })).items.map(keyOf)).toEqual(["cls-telegraph/c1"])
+  })
+
+  it("sSE 带标的订阅：组里任一成员带标的就算命中，范围里组的第一条推 item", async () => {
+    const w = await feedWorld(DESCS(), { enrich: true })
+    const events: StreamEvent[] = []
+    const handle = openFeedStream({ store: w.store, feed: w.feedStore, describe: async () => w.state.descs }, normalizeFeedParams({ symbol: "NVDA.XNAS", source: "ths" }), undefined, e => events.push(e))
+    await handle.ready
+    await ingest(w, "cls-telegraph", [row("c1", { title: "英伟达宣布：以军袭击加沙城一辆汽车，致3死多伤", url: "https://news.example.com/g/1" })], T0)
+    await ingest(w, "ths", [row("t1", { title: "以军袭击加沙城一辆汽车，致3死多伤，医院证实了", url: "https://news.example.com/g/1?utm_source=t" })], T0 + 1000)
+    await vi.waitFor(() => expect(events.length).toBe(2))
+    expect(events.slice(1).map(e => e.type === "item" ? ["item", e.item.itemId] : [e.type])).toEqual([["item", "t1"]])
+    handle.close()
+  })
+})

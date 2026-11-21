@@ -43,7 +43,7 @@ export type StreamEvent =
 
 export interface StreamDeps {
   store: Pick<ObservationStore, "onIngest">
-  feed: Pick<FeedStore, "latestSeq" | "after" | "groups" | "earlierInScope">
+  feed: Pick<FeedStore, "latestSeq" | "after" | "groups" | "earlierInScope" | "groupHasSymbol">
   describe: () => Promise<SourceDescriptor[]>
 }
 
@@ -66,7 +66,8 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
     chain = chain.then(async () => {
       if (closed) return
       const descs = await deps.describe()
-      const match = streamMatcher(params, descs)
+      // 默认（每组一行）时标的按组判断（与 GET /api/feed 一致）：这里的匹配器不看标的，下面查组
+      const match = streamMatcher(params.expand ? params : { ...params, symbol: [] }, descs)
       const scope = resolveScope(params, descs)
       const byId = new Map(descs.map(d => [d.id, d]))
       const fresh = [...items].sort((a, b) => a.seq - b.seq).filter(item => item.seq > lastSent)
@@ -76,6 +77,7 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
         if (closed || item.seq <= lastSent) continue
         lastSent = item.seq
         if (!match(item)) continue
+        if (!params.expand && params.symbol.length && !await deps.feed.groupHasSymbol(item.dupOf ?? item.seq, params.symbol)) continue
         const group = groups.get(item.dupOf ?? item.seq)
         // 默认模式的代表行规则与 GET /api/feed 一致：订阅范围里组的第一条（seq 最小）是代表，推 item；
         // 范围（来源 / 分类 / 停用 / 关键词）里已经有更早的条目（客户端见过它）才推 merge。范围外的主条目不算，所以按来源订阅不会收到指向没见过的行的 merge。
