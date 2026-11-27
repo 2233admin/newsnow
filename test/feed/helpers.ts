@@ -68,3 +68,8 @@ export async function pageAll(service: { query: (p: Record<string, unknown>) => 
 }
 
 export const keyOf = (i: { sourceId: string, itemId: string }) => `${i.sourceId}/${i.itemId}`
+
+/** 批量标注提示词里的各条（id 与标题，按出现顺序）：测试里用来按 id 拼模型的返回。 */
+export function promptItems(user: string): { id: string, title: string }[] {
+  return user.split("\n").filter(l => /^\s+\{"id":/.test(l)).map(l => JSON.parse(l.trim().replace(/,$/, "")))
+}

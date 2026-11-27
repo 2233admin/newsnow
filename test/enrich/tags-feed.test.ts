@@ -1,7 +1,7 @@
 import { createDatabase } from "db0"
 import sqlite from "db0/connectors/better-sqlite3"
 import { describe, expect, it } from "vitest"
-import { T0, descriptors, feedWorld, ingest, keyOf, row } from "../feed/helpers"
+import { T0, descriptors, feedWorld, ingest, keyOf, promptItems, row } from "../feed/helpers"
 import { ObservationStore } from "#/collector/store"
 import { createEnricher } from "#/enrich/enrich"
 import { EnrichStore } from "#/enrich/store"
@@ -128,12 +128,9 @@ describe("规则层：被过滤的仍入库、默认查不出、可按参数查�
 
 describe("影响类型与方向的筛选（标注挂在组上，按组判断）", () => {
   const llm: LlmCall = async (req) => {
-    const n = (req.user.match(/^\[\d+\]/gm) ?? []).length
     // 按标题里的关键字给类型与方向，便于断言
-    const lines = req.user.split("\n").filter(l => /^\[\d+\]/.test(l))
-    return JSON.stringify(Array.from({ length: n }, (_, i) => {
-      const line = lines[i]
-      return line.includes("增持") ? { i, t: "公告", d: "+", g: "增持", k: ["白酒"] } : line.includes("处罚") ? { i, t: "政策与监管", d: "-", g: "处罚", k: [] } : { i, t: "市场情绪", d: "0", g: "情绪", k: [] }
+    return JSON.stringify(promptItems(req.user).map(({ id, title }) => {
+      return title.includes("增持") ? { id, t: "公告", d: "+", g: "增持", k: ["白酒"] } : title.includes("处罚") ? { id, t: "政策与监管", d: "-", g: "处罚", k: [] } : { id, t: "市场情绪", d: "0", g: "情绪", k: [] }
     }))
   }
   async function tagged() {
@@ -205,9 +202,8 @@ describe("影响类型与方向的筛选（标注挂在组上，按组判断）"
 
 describe("独立审 S10：题材筛选、标注来源、themes 的类型", () => {
   const llm: LlmCall = async (req) => {
-    const lines = [...req.user.matchAll(/^\[(\d+)\] (.*)$/gm)]
-    return JSON.stringify(lines.map(([, i, text]) => ({
-      i: Number(i),
+    return JSON.stringify(promptItems(req.user).map(({ id, title: text }) => ({
+      id,
       t: "公告",
       d: "0",
       g: "要点",
@@ -250,7 +246,7 @@ describe("独立审 S10：题材筛选、标注来源、themes 的类型", () =>
     await w.enricher.store.resetTags()
     expect(await ids(w, { theme: "白酒" })).toEqual([])
     expect(((await w.db.prepare("SELECT COUNT(*) AS n FROM item_themes").get()) as { n: number }).n).toBe(0)
-    const relabel: LlmCall = async req => JSON.stringify([...req.user.matchAll(/^\[(\d+)\]/gm)].map(([, i]) => ({ i: Number(i), t: "公告", d: "0", g: "x", k: ["新题材"] })))
+    const relabel: LlmCall = async req => JSON.stringify(promptItems(req.user).map(({ id }) => ({ id, t: "公告", d: "0", g: "x", k: ["新题材"] })))
     await createTagger({ store: w.enricher.store, llm: relabel, sourceIds: async () => null }).run()
     expect(await ids(w, { theme: "白酒" })).toEqual([])
     expect(await ids(w, { theme: "新题材" })).toEqual(["chip", "liquor", "none", "omitted"])
@@ -274,7 +270,7 @@ describe("独立审 S10：题材筛选、标注来源、themes 的类型", () =>
     const prompts: string[] = []
     const seen: LlmCall = async (req) => {
       prompts.push(req.user)
-      return JSON.stringify([...req.user.matchAll(/^\[(\d+)\]/gm)].map(([, i]) => ({ i: Number(i), t: "公告", d: "+", g: "重大合同", k: ["合同"] })))
+      return JSON.stringify(promptItems(req.user).map(({ id }) => ({ id, t: "公告", d: "+", g: "重大合同", k: ["合同"] })))
     }
     await ingest(w, "jin10", [row("a", { title: "加微信领取今日牛股名单，限时免费，明日必涨停，机会难得", url: "https://x.example/same?utm_source=x" })], bj("2026-12-01T11:00:00"))
     await ingest(w, "weibo", [row("b", { title: "某公司发布重大合同公告，金额超过去年营收的一半，股价异动明显", url: "https://x.example/same" })], bj("2026-12-01T11:01:00"))
@@ -450,7 +446,7 @@ describe("d1 的 100 个绑定参数上限", () => {
     const rows = Array.from({ length: 150 }, (_, i) => row(`n${i}`, { title: `第${i}号：${"甲乙丙丁戊己庚辛壬癸"[i % 10]}${i * 104729}事项发布了一则内容互不相同的测试快讯`, url: `https://x.example/${i}` }))
     await store.recordObservations("jin10", rows, bj("2026-11-30T10:00:00"))
     expect((await service.query({ limit: "200" })).items).toHaveLength(150)
-    const llm: LlmCall = async req => JSON.stringify(Array.from({ length: (req.user.match(/^\[\d+\]/gm) ?? []).length }, (_, i) => ({ i, t: "公告", d: "+", g: "g", k: ["x"] })))
+    const llm: LlmCall = async req => JSON.stringify(promptItems(req.user).map(({ id }) => ({ id, t: "公告", d: "+", g: "g", k: ["x"] })))
     const tagger = createTagger({ store: enricher.store, llm, sourceIds: async () => null, batchSize: 150 })
     expect(await tagger.run(1)).toMatchObject({ tagged: 150 })
     await service.query({ impact: "公告", direction: "positive", market: "cn", tradeDate: "2026-11-30", includeFiltered: "1", limit: "200", q: "测试", source: "jin10" })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { T0, descriptors, feedWorld, ingest, row } from "../feed/helpers"
+import { T0, descriptors, feedWorld, ingest, promptItems, row } from "../feed/helpers"
 import { titleKey } from "#/enrich/dedup"
 import { createTagger } from "#/enrich/tagger"
 
@@ -59,8 +59,7 @@ describe("标题变了再采到：批量标注跟着重标", () => {
     store: w.enricher.store,
     llm: async (req) => {
       prompts.push(req.user)
-      const n = (req.user.match(/^\[\d+\]/gm) ?? []).length
-      return JSON.stringify(Array.from({ length: n }, (_, i) => ({ i, t: "公告", d: "0", g: `第 ${prompts.length} 次`, k: [] })))
+      return JSON.stringify(promptItems(req.user).map(({ id }) => ({ id, t: "公告", d: "0", g: `第 ${prompts.length} 次`, k: [] })))
     },
     sourceIds: async () => null,
   })
