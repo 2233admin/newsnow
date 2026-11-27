@@ -11,7 +11,8 @@ import type { Align, Direction, FilterReason, ItemTags } from "./types"
 
 const D1_MAX_PARAMS = 100
 const SAVE_COLUMNS = 7
-const ALIGN_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / 4)
+/** 对齐按 JSON 数组一次传多少行（一个绑定参数，约 50 字节一行）。待定：只是让单个参数不至于很大。 */
+const ALIGN_ROWS_PER_JSON = 500
 const TAG_COLUMNS = 5
 const SAVE_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / SAVE_COLUMNS)
 const SYMBOL_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / 2)
@@ -175,13 +176,25 @@ export class EnrichStore {
     }
   }
 
-  /** 重写这些条目的对齐：先删后插（日历改了、标的变了，市场的个数可能变）。幂等。 */
+  /**
+   * 重写这些条目的对齐（日历改了、标的变了，市场的个数可能变）。幂等，且服务在跑时读的人不会读到「刚删完还没插」的空窗：
+   * 先 upsert 新的（一条语句，要么全进要么全不进），再删掉这些条目里不在新结果里的市场行（另一条语句）；D1 没有事务，所以不用「先删后插」。
+   * 两条语句之间进程挂了，最多留着多余的旧市场行（标的变少、涉及的市场变少时才有），重跑一遍（`enrich:backfill --rules --all`）即清掉；
+   * 数据一直是「旧的完整」或「新的完整」或「新的 + 多余的旧市场行」，不会缺行。
+   * 参数用 JSON 数组 + json_each 传（同 feed/store.ts），一条语句的绑定参数个数固定，D1 的 100 个上限不是问题。
+   */
   async saveAlign(rows: { seq: number, align: Align[] }[]) {
-    for (const part of chunk(rows.map(r => r.seq), IN_PER_STATEMENT)) {
-      await this.db.prepare(`DELETE FROM item_align WHERE seq IN (${part.map(() => "?").join(",")})`).run(...part)
+    for (const part of chunk(rows.flatMap(r => r.align.map(a => [r.seq, a.market, a.tradeDate, a.session] as const)), ALIGN_ROWS_PER_JSON)) {
+      await this.db.prepare(`
+        INSERT INTO item_align (seq, market, trade_date, session)
+        SELECT json_extract(j.value, '$[0]'), json_extract(j.value, '$[1]'), json_extract(j.value, '$[2]'), json_extract(j.value, '$[3]') FROM json_each(?) j WHERE true
+        ON CONFLICT (seq, market) DO UPDATE SET trade_date = excluded.trade_date, session = excluded.session
+      `).run(JSON.stringify(part))
     }
-    for (const part of chunk(rows.flatMap(r => r.align.map(a => [r.seq, a.market, a.tradeDate, a.session] as const)), ALIGN_ROWS_PER_STATEMENT)) {
-      await this.db.prepare(`INSERT OR REPLACE INTO item_align (seq, market, trade_date, session) VALUES ${placeholders(4, part.length)}`).run(...part.flat())
+    for (const part of chunk(rows, ALIGN_ROWS_PER_JSON)) {
+      await this.db.prepare(`
+        DELETE FROM item_align WHERE seq IN (SELECT value FROM json_each(?)) AND (seq || ':' || market) NOT IN (SELECT value FROM json_each(?))
+      `).run(JSON.stringify(part.map(r => r.seq)), JSON.stringify(part.flatMap(r => r.align.map(a => `${r.seq}:${a.market}`))))
     }
   }
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 import { T0, descriptors, feedWorld, ingest, keyOf, row } from "../feed/helpers"
 import { ObservationStore } from "#/collector/store"
 import { createEnricher } from "#/enrich/enrich"
+import { EnrichStore } from "#/enrich/store"
 import { createFeedService } from "#/feed/service"
 import { FeedStore } from "#/feed/store"
 import { normalizeFeedParams } from "#/feed/params"
@@ -368,6 +369,59 @@ describe("迁移与回填", () => {
     const res = await w.service.query({})
     expect(res.items).toHaveLength(1)
     expect(res.items[0].sourcesCount).toBe(2)
+  })
+})
+
+describe("独立审 S11：saveAlign 不留空窗", () => {
+  it("重写对齐的每一步之后读，这条的对齐都不为空；市场变少时多余的旧行被清掉；重复写幂等", async () => {
+    const w = await world()
+    await ingest(w, "jin10", [row("both", { title: "苹果（AAPL）与贵州茅台（600519）同日披露三季报，市场高度关注两家公司业绩" })], bj("2026-11-30T16:00:00"))
+    const seq = 1
+    const count = async () => ((await w.db.prepare("SELECT COUNT(*) AS n FROM item_align WHERE seq = ?").get(seq)) as { n: number }).n
+    expect(await count()).toBe(2)
+    // 包一层：每条语句执行完立刻读一次这条的对齐行数，记下来
+    const seen: number[] = []
+    const probed = {
+      ...w.db,
+      prepare: (sql: string) => {
+        const stmt = w.db.prepare(sql)
+        return new Proxy(stmt, {
+          get(target, prop, receiver) {
+            const v = Reflect.get(target, prop, receiver)
+            if (prop !== "run") return typeof v === "function" ? v.bind(target) : v
+            return async (...args: unknown[]) => {
+              const r = await (v as (...a: unknown[]) => Promise<unknown>).apply(target, args)
+              seen.push(await count())
+              return r
+            }
+          },
+        })
+      },
+    } as unknown as typeof w.db
+    const store = new EnrichStore(probed)
+    // 改成只剩美股一个市场、交易日也变了：旧的 cn 行要删，us 行要改
+    await store.saveAlign([{ seq, align: [{ market: "us", tradeDate: "2026-12-02", session: "pre" }] }])
+    expect(Math.min(...seen), `每步之后的行数 ${seen.join(",")}`).toBeGreaterThanOrEqual(1)
+    expect(seen.length).toBeGreaterThanOrEqual(2)
+    expect(await w.db.prepare("SELECT market, trade_date AS d, session FROM item_align WHERE seq = ?").all(seq)).toEqual([{ market: "us", d: "2026-12-02", session: "pre" }])
+    await store.saveAlign([{ seq, align: [{ market: "us", tradeDate: "2026-12-02", session: "pre" }] }])
+    expect(await count()).toBe(1)
+    // 又变回两个市场
+    await store.saveAlign([{ seq, align: [{ market: "cn", tradeDate: "2026-12-01", session: "post" }, { market: "us", tradeDate: "2026-11-30", session: "pre" }] }])
+    expect((await w.service.query({ includeInactive: "1" })).items[0].align).toEqual([{ market: "cn", tradeDate: "2026-12-01", session: "post" }, { market: "us", tradeDate: "2026-11-30", session: "pre" }])
+    // 没有对齐的条目（空数组）：清空
+    await store.saveAlign([{ seq, align: [] }])
+    expect(await count()).toBe(0)
+  })
+
+  it("一批多条、跨 JSON 分块（600 条）也对：每条的对齐都是新的，别的条目不受影响", async () => {
+    const w = await world()
+    await ingest(w, "jin10", Array.from({ length: 600 }, (_, i) => row(`n${i}`, { title: `第 ${i} 条互不相同的测试快讯：${"甲乙丙丁戊己庚辛壬癸"[i % 10]}${i * 7919}号事项发布公告` })), bj("2026-11-30T10:00:00"))
+    const rows = Array.from({ length: 600 }, (_, i) => ({ seq: i + 1, align: [{ market: "cn" as const, tradeDate: "2026-12-03", session: "open" as const }] }))
+    await w.enricher.store.saveAlign(rows)
+    expect(((await w.db.prepare("SELECT COUNT(*) AS n, COUNT(DISTINCT trade_date) AS d FROM item_align").get()) as { n: number, d: number })).toEqual({ n: 600, d: 1 })
+    await w.enricher.store.saveAlign(rows.slice(0, 10).map(r => ({ ...r, align: [] })))
+    expect(((await w.db.prepare("SELECT COUNT(*) AS n FROM item_align").get()) as { n: number }).n).toBe(590)
   })
 })
 
