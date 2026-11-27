@@ -64,7 +64,7 @@ export interface FeedItemView {
   align: Align[]
   /**
    * 分类标注（影响类型、方向、一句话要点、题材），挂在组上：主条目与成员行拿到的是同一份（主条目的）。
-   * null = 还没标：没配模型、还在排队、被规则层过滤、或这一组标注失败到了上限。方向只是对这条新闻本身的读法（利好 / 利空 / 中性），不是涨跌预测。
+   * null = 还没标：没配模型、还在排队、被规则层过滤、或这一组标注失败到了上限。方向（positive 正面 / negative 负面 / neutral 中性）只是对这条新闻本身的读法，不是涨跌预测。
    */
   tags: ItemTags | null
   /** 规则层的过滤原因（advert 广告 / stock_tout 荐股软文 / ranking_list 榜单水文 / market_roundup 行情罗列）；没被过滤是 null，默认查询里只会见到 null，includeFiltered=1 才见到非 null */

@@ -91,7 +91,7 @@ describe("合成大库上按对齐 / 标注 / 过滤查询的耗时有上限", (
     await db.exec(`
       UPDATE items SET tagged = 1,
         impact = CASE seq % 5 WHEN 0 THEN '公告' WHEN 1 THEN '政策与监管' WHEN 2 THEN '行业与题材' WHEN 3 THEN '公司经营' ELSE '市场情绪' END,
-        direction = CASE seq % 3 WHEN 0 THEN 'bull' WHEN 1 THEN 'bear' ELSE 'neutral' END
+        direction = CASE seq % 3 WHEN 0 THEN 'positive' WHEN 1 THEN 'negative' ELSE 'neutral' END
       WHERE dup_of IS NULL
     `)
     await db.exec(`UPDATE items SET impact = '稀有类型' WHERE seq IN (5, 20007)`)
@@ -111,8 +111,8 @@ describe("合成大库上按对齐 / 标注 / 过滤查询的耗时有上限", (
       ["tradeDate 不存在的一天", { market: "cn", tradeDate: "2020-01-01" }, 0],
       ["罕见影响类型", { impact: "稀有类型" }, 2],
       ["常见影响类型", { impact: "公告" }, 50],
-      ["影响类型 + 方向", { impact: "公告", direction: "bull" }, 50],
-      ["只有方向", { direction: "bear" }, 50],
+      ["影响类型 + 方向", { impact: "公告", direction: "positive" }, 50],
+      ["只有方向", { direction: "negative" }, 50],
       ["影响类型 + 最早一天 + 来源（最坏组合）", { impact: "公告", market: "cn", tradeDate: first, source: "jin10" }, 50, 60],
     ]
     for (const [label, params, rows, limitMs] of cases) {

@@ -73,5 +73,5 @@ for (const seq of seqs.slice(0, n)) {
   if (!item?.tags) continue
   samples.push({ seq, title: item.cleanTitle ?? item.title, market: marketsOf(item.symbols, item.sourceId)[0], predicted: item.tags, gold: { impact: null, direction: null } })
 }
-writeFileSync(out, `${JSON.stringify({ note: "人工填 gold.impact（分类表里的名称）与 gold.direction（bull / bear / neutral），再用 --score 算准确率", samples }, null, 2)}\n`)
+writeFileSync(out, `${JSON.stringify({ note: "人工填 gold.impact（分类表里的名称）与 gold.direction（positive / negative / neutral），再用 --score 算准确率", samples }, null, 2)}\n`)
 console.log(`抽了 ${samples.length} 组（库里已标注 ${seqs.length} 组），写到 ${out}`)

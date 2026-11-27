@@ -147,7 +147,7 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     // HTTP 入口同一套
     const http = await getJson("/api/feed?market=cn&tradeDate=2026-11-30")
     expect(http.items.map((i: any) => i.itemId)).toEqual(["al1"])
-    expect((await getJson("/api/feed?impact=公告&direction=bull")).items).toEqual([])
+    expect((await getJson("/api/feed?impact=公告&direction=positive")).items).toEqual([])
     // 坏参数作为工具失败返回
     const bad = await call(client, "query_feed", { tradeDate: "2026-02-30" })
     expect(bad.res.isError).toBe(true)
@@ -162,7 +162,7 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     const meta = await call(client, "feed_meta")
     expect(meta.data.markets.find((m: any) => m.id === "cn").impactTypes.map((t: any) => t.name)).toEqual(["公告", "政策与监管", "行业与题材", "公司经营", "外盘与宏观", "市场情绪", "其他"])
     expect(meta.data.tagging).toEqual({ configured: false })
-    expect((await getJson("/api/feed/meta")).directions).toEqual(["bull", "bear", "neutral"])
+    expect((await getJson("/api/feed/meta")).directions).toEqual(["positive", "negative", "neutral"])
     const deep = await call(client, "read_item_deep", { seq: 1 })
     expect(deep.data).toMatchObject({ seq: 1, status: "unavailable", deep: null })
     expect(deep.data.message).toContain("ENRICH_LLM")

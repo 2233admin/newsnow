@@ -45,7 +45,7 @@ export interface FeedParams {
   tradeDate?: string
   /** 影响类型（分类表里的名称，见 GET /api/feed/meta）；组的标注命中其中之一 */
   impact: string[]
-  /** 方向：bull / bear / neutral；组的标注命中其中之一 */
+  /** 方向：positive / negative / neutral（对新闻本身的读法，不是涨跌预测）；组的标注命中其中之一 */
   direction: Direction[]
   /** 含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列）；默认不含 */
   includeFiltered: boolean
@@ -106,7 +106,7 @@ function marketParam(value: unknown): Market | undefined {
 function directions(value: unknown): Direction[] {
   const out = list(value, "direction").map(v => v.toLowerCase())
   for (const v of out) {
-    if (!(DIRECTIONS as readonly string[]).includes(v)) throw new InputError(`direction「${v}」必须是 ${DIRECTIONS.join(" / ")}（利好 / 利空 / 中性）之一`)
+    if (!(DIRECTIONS as readonly string[]).includes(v)) throw new InputError(`direction「${v}」必须是 ${DIRECTIONS.join(" / ")}（正面 / 负面 / 中性，对新闻本身的读法）之一`)
   }
   return [...new Set(out)] as Direction[]
 }

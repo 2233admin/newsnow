@@ -153,18 +153,18 @@ describe("影响类型与方向的筛选（标注挂在组上，按组判断）"
     expect(await ids({ impact: ["公告", "市场情绪"] })).toEqual(["mood", "up"])
     expect(await ids({ impact: "没有这一类" })).toEqual([])
     const up = (await w.service.query({ impact: "公告" })).items[0]
-    expect(up).toMatchObject({ sourcesCount: 2, tags: { impact: "公告", direction: "bull", gist: "增持", themes: ["白酒"] } })
+    expect(up).toMatchObject({ sourcesCount: 2, tags: { impact: "公告", direction: "positive", gist: "增持", themes: ["白酒"] } })
   })
 
-  it("direction：bull / bear / neutral；与 impact 组合是交集", async () => {
+  it("direction：positive / negative / neutral；与 impact 组合是交集", async () => {
     const w = await tagged()
     const ids = async (q: Record<string, unknown>) => (await w.service.query(q)).items.map(i => i.itemId).sort()
-    expect(await ids({ direction: "bull" })).toEqual(["up"])
-    expect(await ids({ direction: "bear" })).toEqual(["pen"])
+    expect(await ids({ direction: "positive" })).toEqual(["up"])
+    expect(await ids({ direction: "negative" })).toEqual(["pen"])
     expect(await ids({ direction: "neutral" })).toEqual(["mood"])
-    expect(await ids({ direction: "bull,bear" })).toEqual(["pen", "up"])
-    expect(await ids({ impact: "公告", direction: "bear" })).toEqual([])
-    expect(await ids({ impact: "公告", direction: "bull" })).toEqual(["up"])
+    expect(await ids({ direction: "positive,negative" })).toEqual(["pen", "up"])
+    expect(await ids({ impact: "公告", direction: "negative" })).toEqual([])
+    expect(await ids({ impact: "公告", direction: "positive" })).toEqual(["up"])
   })
 
   it("展开模式下按组判断：成员行也跟着主条目命中，且成员行 tags 是主条目的", async () => {
@@ -195,7 +195,7 @@ describe("影响类型与方向的筛选（标注挂在组上，按组判断）"
     const w = await world()
     const meta = w.service.meta()
     expect(meta.markets.find(m => m.id === "cn")!.impactTypes.map(x => x.name)).toContain("政策与监管")
-    expect(meta.directions).toEqual(["bull", "bear", "neutral"])
+    expect(meta.directions).toEqual(["positive", "negative", "neutral"])
     expect(meta.sessions).toEqual(["pre", "open", "lunch", "post", "closed"])
     expect(meta.filterReasons.map(f => f.id)).toEqual(["advert", "stock_tout", "ranking_list", "market_roundup"])
     expect(meta.tagging.configured).toBe(false)
@@ -219,6 +219,21 @@ describe("迁移与回填", () => {
     const res = await service.query({})
     expect(res.items).toHaveLength(1)
     expect(res.items[0]).toMatchObject({ itemId: "old", tags: null, filterReason: null, align: [] })
+  })
+
+  it("direction 改名：库里已标的 bull / bear 启动时改成 positive / negative，可重复启动；查询里旧值被拒绝", async () => {
+    const db = createDatabase(sqlite({ name: ":memory:" }))
+    await new ObservationStore(db).init()
+    await db.exec(`INSERT INTO items (source_id, item_id, title, first_seen_at, last_seen_at, feed_ts, clean_title, enriched, impact, direction, tagged) VALUES
+      ('jin10', 'a', '旧标注甲', ${T0}, ${T0}, ${T0}, '旧标注甲', 2, '公告', 'bull', 1),
+      ('jin10', 'b', '旧标注乙', ${T0}, ${T0}, ${T0 + 1}, '旧标注乙', 2, '公告', 'bear', 1),
+      ('jin10', 'c', '旧标注丙', ${T0}, ${T0}, ${T0 + 2}, '旧标注丙', 2, '公告', 'neutral', 1)`)
+    await new ObservationStore(db).init()
+    await new ObservationStore(db).init()
+    const rows = (await db.prepare("SELECT item_id AS id, direction AS d FROM items ORDER BY seq").all()) as { id: string, d: string }[]
+    expect(rows).toEqual([{ id: "a", d: "positive" }, { id: "b", d: "negative" }, { id: "c", d: "neutral" }])
+    expect(() => normalizeFeedParams({ direction: "bull" })).toThrow(InputError)
+    expect(() => normalizeFeedParams({ direction: "bear" })).toThrow(InputError)
   })
 
   it("enrich:backfill --rules：给版本 1 的存量条目补过滤原因与对齐，可重复跑；--all 全部重算", async () => {
@@ -277,7 +292,7 @@ describe("d1 的 100 个绑定参数上限", () => {
     const llm: LlmCall = async req => JSON.stringify(Array.from({ length: (req.user.match(/^\[\d+\]/gm) ?? []).length }, (_, i) => ({ i, t: "公告", d: "+", g: "g", k: ["x"] })))
     const tagger = createTagger({ store: enricher.store, llm, sourceIds: async () => null, batchSize: 150 })
     expect(await tagger.run(1)).toMatchObject({ tagged: 150 })
-    await service.query({ impact: "公告", direction: "bull", market: "cn", tradeDate: "2026-11-30", includeFiltered: "1", limit: "200", q: "测试", source: "jin10" })
+    await service.query({ impact: "公告", direction: "positive", market: "cn", tradeDate: "2026-11-30", includeFiltered: "1", limit: "200", q: "测试", source: "jin10" })
     await enricher.reapplyRules(150, undefined, true)
     await enricher.resymbol(150)
     expect(max).toBeGreaterThan(50) // 确实走了多行语句

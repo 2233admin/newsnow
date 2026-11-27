@@ -17,9 +17,12 @@ export interface Align {
   session: Session
 }
 
-/** 对这条新闻本身的读法，不是对价格涨跌的预测。 */
-export type Direction = "bull" | "bear" | "neutral"
-export const DIRECTIONS: readonly Direction[] = ["bull", "bear", "neutral"]
+/**
+ * 对这条新闻本身的读法：positive 正面（读起来是好消息）/ negative 负面（坏消息）/ neutral 中性或无法判断。
+ * 不是对价格涨跌的判断或预测（所以不叫 bull / bear，前端也不要渲染成「看涨 / 看跌」）。
+ */
+export type Direction = "positive" | "negative" | "neutral"
+export const DIRECTIONS: readonly Direction[] = ["positive", "negative", "neutral"]
 
 /**
  * 批量标注层的结果（每组一份，挂在组的主条目上）。四个字段各自可以是 null：模型少返回了哪个就是哪个 null，不补、不造。

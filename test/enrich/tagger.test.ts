@@ -40,7 +40,9 @@ describe("批量标注的提示词", () => {
     expect(user).toContain("[0] 贵州茅台：控股股东拟增持")
     expect(user).toContain("[1] 国务院：发布新政策")
     expect(system).toContain("不是对价格涨跌的预测")
-    expect(user).toContain("不是涨跌预测")
+    expect(system).toContain("不要预测价格")
+    expect(user).toContain("不要预测价格涨跌")
+    expect(user).toContain("\"+\" 正面")
   })
 
   it("美股、crypto 用各自的表", () => {
@@ -61,7 +63,7 @@ describe("批量标注的解析（用夹具模拟模型返回）", () => {
 
   it("干净的返回", () => {
     const m = parseTagResponse(good, 2, CN)
-    expect(m.get(0)).toEqual({ impact: "公告", direction: "bull", gist: "茅台控股股东拟增持", themes: ["白酒", "消费"] })
+    expect(m.get(0)).toEqual({ impact: "公告", direction: "positive", gist: "茅台控股股东拟增持", themes: ["白酒", "消费"] })
     expect(m.get(1)).toEqual({ impact: "政策与监管", direction: "neutral", gist: "国务院发布新政", themes: [] })
   })
 
@@ -89,7 +91,7 @@ describe("批量标注的解析（用夹具模拟模型返回）", () => {
 
   it("残缺的字段记 null，不补不造：影响类型不在表里 → null（保留其余）；方向认不出 → null；缺 g / k → null", () => {
     const m = parseTagResponse(`[{"i":0,"t":"瞎编的类型","d":"+","g":"甲","k":["a"]},{"i":1,"t":"公告","d":"也许","g":"乙"},{"i":2,"t":"公告"}]`, 3, CN)
-    expect(m.get(0)).toEqual({ impact: null, direction: "bull", gist: "甲", themes: ["a"] })
+    expect(m.get(0)).toEqual({ impact: null, direction: "positive", gist: "甲", themes: ["a"] })
     expect(m.get(1)).toEqual({ impact: "公告", direction: null, gist: "乙", themes: null })
     expect(m.get(2)).toEqual({ impact: "公告", direction: null, gist: null, themes: null })
   })
@@ -102,7 +104,7 @@ describe("批量标注的解析（用夹具模拟模型返回）", () => {
 
   it("序号写成数字串也认；方向的几种写法都归一", () => {
     const m = parseTagResponse(`[{"i":"0","t":"公告","d":"利好"},{"i":1,"t":"公告","d":"bearish"},{"i":2,"t":"公告","d":"Neutral"}]`, 3, CN)
-    expect([0, 1, 2].map(i => m.get(i)?.direction)).toEqual(["bull", "bear", "neutral"])
+    expect([0, 1, 2].map(i => m.get(i)?.direction)).toEqual(["positive", "negative", "neutral"])
   })
 
   it("题材去空、去重、截长、最多 5 个；要点最长 80 字；字符串里的花括号不会弄乱解析", () => {
@@ -154,8 +156,8 @@ describe("批量标注一轮：落库、失败计数、没配模型", () => {
     const res = await w.service.query({})
     // 新的先标：序号 0 是 seq 最大的那条
     const bySeq = new Map(res.items.map(i => [i.seq, i]))
-    expect(bySeq.get(3)!.tags).toEqual({ impact: "公告", direction: "bull", gist: "甲", themes: ["x"] })
-    expect(bySeq.get(2)!.tags).toEqual({ impact: "公告", direction: "bear", gist: "乙", themes: [] })
+    expect(bySeq.get(3)!.tags).toEqual({ impact: "公告", direction: "positive", gist: "甲", themes: ["x"] })
+    expect(bySeq.get(2)!.tags).toEqual({ impact: "公告", direction: "negative", gist: "乙", themes: [] })
     expect(bySeq.get(1)!.tags).toEqual({ impact: "市场情绪", direction: "neutral", gist: "丙", themes: ["y", "z"] })
   })
 
@@ -168,7 +170,7 @@ describe("批量标注一轮：落库、失败计数、没配模型", () => {
     const tagger = createTagger({ store: w.enricher.store, llm, sourceIds: async () => null })
     expect(await tagger.run()).toMatchObject({ tagged: 1, failed: 1 })
     let res = await w.service.query({})
-    expect(res.items.map(i => i.tags)).toEqual([{ impact: "公告", direction: "bull", gist: null, themes: null }, null])
+    expect(res.items.map(i => i.tags)).toEqual([{ impact: "公告", direction: "positive", gist: null, themes: null }, null])
     // 再跑：只剩没标成的那条
     for (let i = 1; i < MAX_TAG_ATTEMPTS; i++) await tagger.run()
     expect(llm).toHaveBeenCalledTimes(MAX_TAG_ATTEMPTS)

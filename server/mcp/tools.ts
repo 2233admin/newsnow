@@ -78,7 +78,7 @@ export function createMcpServer({ feed, actions, caller }: McpDeps) {
       market: z.enum(MARKETS as [string, ...string[]]).optional().describe("市场：cn A 股、us 美股、crypto 加密币；只要按这个市场对齐过交易日的条目"),
       tradeDate: z.string().optional().describe("交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场）"),
       impact: list.optional().describe("影响类型（名称，如 公告、政策与监管；各市场的分类表见 feed_meta）；组的标注命中其中之一"),
-      direction: z.union([z.enum(DIRECTIONS as unknown as [string, ...string[]]), z.array(z.enum(DIRECTIONS as unknown as [string, ...string[]]))]).optional().describe("方向 bull 利好 / bear 利空 / neutral 中性；对新闻本身的读法，不是涨跌预测"),
+      direction: z.union([z.enum(DIRECTIONS as unknown as [string, ...string[]]), z.array(z.enum(DIRECTIONS as unknown as [string, ...string[]]))]).optional().describe("方向 positive 正面 / negative 负面 / neutral 中性；对新闻本身的读法，不是涨跌预测"),
       includeFiltered: z.boolean().optional().describe("含规则层过滤掉的条目（荐股软文、榜单水文、广告、行情罗列），每条带 filterReason"),
     },
     annotations: read,

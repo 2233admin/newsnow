@@ -15,7 +15,7 @@ import type { Direction, Market } from "./types"
  * 结构参照 owengetinfo-design/PokieTicker 的 backend/pipeline/layer1.py（MIT License，Copyright (c) 2025 PokieTicker）：
  * 一次请求打包 50 条左右、要求只返回紧凑的 JSON 数组（短键 i / r / s / e，省输出）、按 `[` 到 `]` 截取再解析。
  * 与它不同的地方：
- * - 它按单个标的问「这篇对 X 是涨是跌、为什么」，这里不问涨跌，只问这条新闻本身的读法（方向 = 利好 / 利空 / 中性）、影响类型、一句话要点与相关题材；
+ * - 它按单个标的问「这篇对 X 是涨是跌、为什么」，这里不问涨跌，只问这条新闻本身的读法（方向 = 正面 positive / 负面 negative / 中性 neutral，不是涨跌）、影响类型、一句话要点与相关题材；
  * - 解析更宽容：返回被截断、夹带说明文字、少了某条时，能解析出来的照收，其余字段 null，不整批作废；
  * - 每组（去重后的主条目）只标一次，被规则层过滤的不标；
  * - 没配模型时整层跳过，字段保持 null，不报错、不造假。
@@ -44,7 +44,7 @@ const MAX_THEME_CHARS = 24
 
 export function buildTagPrompt(market: Market, titles: string[], impact: ImpactConfig = getImpactConfig()): { system: string, user: string } {
   const table = impact[market]
-  const system = "你是财经新闻的分类标注器。只依据给出的标题标注，不要补充标题里没有的事实；你的判断只是对这条新闻本身的读法，不是对价格涨跌的预测。只输出 JSON，不要解释，不要代码块。"
+  const system = "你是财经新闻的分类标注器。只依据给出的标题标注，不要补充标题里没有的事实；你的判断只是对这条新闻本身的读法（好消息还是坏消息），不是对价格涨跌的预测：不要预测价格，不要判断对股价的影响，不给买卖建议。只输出 JSON，不要解释，不要代码块。"
   const types = table.types.map(t => `- ${t.name}${t.hint ? `：${t.hint}` : ""}`).join("\n")
   const lines = titles.map((t, i) => `[${i}] ${t.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE_CHARS)}`).join("\n")
   const user = `市场：${table.label}
@@ -55,7 +55,7 @@ ${types}
 [{"i":0,"t":"影响类型","d":"+","g":"一句话要点","k":["题材"]}]
 i：新闻序号。
 t：影响类型，见上表。
-d：这条新闻本身的读法，"+" 利好、"-" 利空、"0" 中性或无法判断。不是涨跌预测。
+d：这条新闻本身读起来是好消息还是坏消息："+" 正面、"-" 负面、"0" 中性或无法判断。只判断新闻本身，不要预测价格涨跌，不要判断对股价的影响。
 g：一句话要点，不超过 ${MAX_GIST_CHARS / 2} 个字，只复述标题里有的信息。
 k：相关题材或板块，至多 ${MAX_THEMES} 个，没有就给 []。
 
@@ -119,8 +119,8 @@ export function extractObjects(text: string): Record<string, unknown>[] {
 function direction(v: unknown): Direction | null {
   if (typeof v !== "string") return null
   const s = v.trim().toLowerCase()
-  if (["+", "bull", "bullish", "positive", "利好", "多"].includes(s)) return "bull"
-  if (["-", "bear", "bearish", "negative", "利空", "空"].includes(s)) return "bear"
+  if (["+", "positive", "pos", "bull", "bullish", "正面", "利好", "多"].includes(s)) return "positive"
+  if (["-", "negative", "neg", "bear", "bearish", "负面", "利空", "空"].includes(s)) return "negative"
   if (["0", "neutral", "中性", "无"].includes(s)) return "neutral"
   return (DIRECTIONS as readonly string[]).includes(s) ? s as Direction : null
 }

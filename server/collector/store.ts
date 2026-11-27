@@ -335,6 +335,8 @@ export class ObservationStore {
     await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_tagged ON items (tagged, seq)`).run()
     await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_impact ON items (impact, direction)`).run()
     await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_direction ON items (direction)`).run()
+    // direction 的取值从 bull / bear 改名为 positive / negative（对新闻本身的读法，不是涨跌判断）：本地已经标过的库跟着改。幂等：改完就没有旧值可命中
+    await this.db.prepare(`UPDATE items SET direction = CASE direction WHEN 'bull' THEN 'positive' ELSE 'negative' END WHERE direction IN ('bull', 'bear')`).run()
     await this.db.prepare(`
       CREATE TABLE IF NOT EXISTS item_align (
         seq INTEGER NOT NULL,

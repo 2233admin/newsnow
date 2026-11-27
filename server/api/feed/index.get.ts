@@ -18,7 +18,7 @@ import { guarded } from "#/registry/http"
  *   market         cn / us / crypto：只要按这个市场对齐过交易日的条目（#2188 补充）
  *   tradeDate      交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场）。收盘后与休市日的新闻对齐到下一个交易日
  *   impact         影响类型（分类表里的名称，见 GET /api/feed/meta），逗号分隔或重复；组的标注命中其中之一。标注挂在主条目上，按组判断
- *   direction      bull / bear / neutral，逗号分隔或重复；对这条新闻本身的读法，不是涨跌预测
+ *   direction      positive / negative / neutral，逗号分隔或重复；对这条新闻本身的读法（正面 / 负面 / 中性），不是涨跌预测
  *   includeFiltered=1  含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列），每条带 filterReason；默认不含
  *   limit          每页条数，1–200，默认 50
  *   cursor         上一页响应的 nextCursor

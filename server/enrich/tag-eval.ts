@@ -3,7 +3,7 @@
  * 脚本 scripts/enrich-tag-eval.ts 与单测 test/enrich/tag-eval.test.ts 共用；写法仿 eval.ts（标的识别的评测）。
  *
  * 流程（需要人工）：1) `pnpm enrich:tag-eval --sample 100 --out sample.json` 从库里随机抽 100 个已标注的组，写出标题与模型的标注；
- * 2) 人工在 sample.json 里给每条的 gold.impact（分类表里的名称）与 gold.direction（bull / bear / neutral）填上；
+ * 2) 人工在 sample.json 里给每条的 gold.impact（分类表里的名称）与 gold.direction（positive / negative / neutral）填上；
  * 3) `pnpm enrich:tag-eval --score sample.json` 报准确率。gold 没填的条目不计入分母。
  */
 

@@ -7,8 +7,8 @@ const s = (seq: number, predicted: Partial<TagSample["predicted"]>, gold: TagSam
 describe("影响类型准确率的评测", () => {
   it("只算人工标了 gold 的；模型没给类型（null）算错；方向单独算", () => {
     const r = scoreTags([
-      s(1, { impact: "公告", direction: "bull" }, { impact: "公告", direction: "bull" }),
-      s(2, { impact: "公告", direction: "bull" }, { impact: "政策与监管", direction: "bear" }),
+      s(1, { impact: "公告", direction: "positive" }, { impact: "公告", direction: "positive" }),
+      s(2, { impact: "公告", direction: "positive" }, { impact: "政策与监管", direction: "negative" }),
       s(3, { impact: null, direction: "neutral" }, { impact: "公告", direction: "neutral" }),
       s(4, { impact: "其他" }, null), // 没标 gold，不计
       s(5, { impact: "公告" }, { impact: null, direction: null }), // gold 都是空，不计
