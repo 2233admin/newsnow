@@ -75,14 +75,39 @@ export function createMcpServer({ feed, actions, caller }: McpDeps) {
       limit: z.number().int().min(1).max(200).optional().describe("每页条数，默认 50"),
       cursor: z.string().optional().describe("上一页返回的 nextCursor，原样传回"),
       includeInactive: z.boolean().optional().describe("含停用与已删除的源的历史条目"),
-      market: z.enum(MARKETS as [string, ...string[]]).optional().describe("市场：cn A 股、us 美股、crypto 加密币；只要按这个市场对齐过交易日的条目"),
+      market: z.enum(MARKETS as [string, ...string[]]).optional().describe("市场：cn A 股、us 美股、crypto 加密币；只要按这个市场对齐过交易日的条目。给了 symbol 与交易日条件却没给 market 时，由标的的场所推出（跨市场的 symbol 要自己带 market）"),
       tradeDate: z.string().optional().describe("交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场）"),
+      tradeDateFrom: z.string().optional().describe("交易日区间起点（含）YYYY-MM-DD，口径同 tradeDate，与 market 配合"),
+      tradeDateTo: z.string().optional().describe("交易日区间终点（含）YYYY-MM-DD"),
       impact: list.optional().describe("影响类型（名称，如 公告、政策与监管；各市场的分类表见 feed_meta）；组的标注命中其中之一"),
       direction: z.union([z.enum(DIRECTIONS as unknown as [string, ...string[]]), z.array(z.enum(DIRECTIONS as unknown as [string, ...string[]]))]).optional().describe("方向 positive 正面 / negative 负面 / neutral 中性；对新闻本身的读法，不是涨跌预测"),
       includeFiltered: z.boolean().optional().describe("含规则层过滤掉的条目（荐股软文、榜单水文、广告、行情罗列），每条带 filterReason"),
     },
     annotations: read,
   }, args => run(() => feed.query(args)))
+
+  server.registerTool("feed_days", {
+    title: "按交易日聚合新闻",
+    description: "某个市场（或由 symbol 推出）在一段交易日区间里，每个有新闻的交易日有几条、按影响类型与方向各几条，用于 K 线打点与区间归因。"
+      + "返回 { market, tradeDateFrom, tradeDateTo, days: [{ tradeDate, count, byImpact, byDirection, untagged }] }（升序，只含有新闻的日子；区间最长 800 天）。"
+      + "每天的 count 等于 query_feed 带同样参数加 tradeDate = 这一天的总条数（同一套过滤与按组收拢）。",
+    inputSchema: {
+      market: z.enum(MARKETS as [string, ...string[]]).optional().describe("市场：cn / us / crypto；不给时由 symbol 的场所推出"),
+      symbol: list.optional().describe("标的，品种 id「代码.场所」，同 query_feed"),
+      tradeDateFrom: z.string().optional().describe("交易日区间起点（含）YYYY-MM-DD"),
+      tradeDateTo: z.string().optional().describe("交易日区间终点（含）YYYY-MM-DD"),
+      tradeDate: z.string().optional().describe("只要一天时用它，等于 tradeDateFrom = tradeDateTo"),
+      impact: list.optional().describe("只数这些影响类型的组"),
+      direction: z.union([z.enum(DIRECTIONS as unknown as [string, ...string[]]), z.array(z.enum(DIRECTIONS as unknown as [string, ...string[]]))]).optional().describe("方向 positive / negative / neutral"),
+      source: list.optional().describe("来源 id；带 * 的是前缀"),
+      category: list.optional().describe("分类"),
+      q: z.string().optional().describe("关键词，空白分隔，标题须包含每一个词"),
+      expand: z.boolean().optional().describe("同一事件的多条报道每条单独计数；默认每组一条"),
+      includeFiltered: z.boolean().optional().describe("含规则层过滤掉的条目"),
+      includeInactive: z.boolean().optional().describe("含停用与已删除的源的历史条目"),
+    },
+    annotations: read,
+  }, args => run(() => feed.days(args)))
 
   server.registerTool("feed_meta", {
     title: "新闻流的筛选枚举",

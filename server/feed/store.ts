@@ -45,6 +45,10 @@ export interface FeedFilter {
   market?: Market
   /** 条目在某个市场里对齐到这个交易日（YYYY-MM-DD） */
   tradeDate?: string
+  /** 条目在某个市场里对齐到的交易日不早于它（含，YYYY-MM-DD）；与 market 配合，与 tradeDate 同口径 */
+  tradeDateFrom?: string
+  /** 对齐到的交易日不晚于它（含） */
+  tradeDateTo?: string
   /** 组的影响类型命中其中之一（标注挂在主条目上，按组判断，同标的）。空 / 不给 = 不限 */
   impact?: string[]
   /** 组的方向命中其中之一 */
@@ -67,23 +71,23 @@ function rowsOf<T>(res: unknown): T[] {
 const escapeLike = (term: string) => term.replace(/[\\%_]/g, c => `\\${c}`)
 
 /** 范围条件（时间、游标）：这些能直接用 idx_items_feed 定位。 */
-function rangeWhere(filter: FeedFilter, cursor?: FeedCursor) {
+function rangeWhere(filter: FeedFilter, cursor?: FeedCursor, col = "") {
   const where: string[] = []
   const params: Primitive[] = []
   if (filter.from !== undefined) {
-    where.push(`feed_ts >= ?`)
+    where.push(`${col}feed_ts >= ?`)
     params.push(filter.from)
   }
   if (filter.to !== undefined) {
-    where.push(`feed_ts < ?`)
+    where.push(`${col}feed_ts < ?`)
     params.push(filter.to)
   }
   if (filter.since !== undefined) {
-    where.push(`first_seen_at >= ?`)
+    where.push(`${col}first_seen_at >= ?`)
     params.push(filter.since)
   }
   if (cursor) {
-    where.push(`(feed_ts, source_id, item_id) < (?, ?, ?)`)
+    where.push(`(${col}feed_ts, ${col}source_id, ${col}item_id) < (?, ?, ?)`)
     params.push(cursor.feedTs, cursor.sourceId, cursor.itemId)
   }
   return { where, params }
@@ -93,7 +97,7 @@ function rangeWhere(filter: FeedFilter, cursor?: FeedCursor) {
  * 「范围」条件（来源集合、关键词、时间），写在别名 m 的 items 行上：定组的代表行时，组里别的条目也要满足同样的范围才算「更早的」。
  * 游标与 since 是位置（拉新用），不是范围，不在里面：客户端已有的老组来了新成员，since 查询不该把它当新行；标的按组判断（见 rowWhere），也不在里面。
  */
-function memberScope(filter: FeedFilter) {
+function memberScope(filter: FeedFilter, perDate?: { market: Market }) {
   const where: string[] = []
   const params: Primitive[] = []
   if (filter.sourceIds) {
@@ -113,17 +117,22 @@ function memberScope(filter: FeedFilter) {
     params.push(filter.to)
   }
   if (!filter.includeFiltered) where.push(`m.filter_reason IS NULL`)
-  const align = alignWhere("m.seq", filter)
-  if (align) {
-    where.push(align.sql)
-    params.push(...align.params)
+  if (perDate) {
+    // 按日聚合（days）：每个交易日各自算代表行——同组里在「候选行自己对齐到的这一天」也对齐的更早成员才算更早的（外层别名 a 是候选行的对齐行）
+    where.push(`m.seq IN (SELECT ma.seq FROM item_align ma WHERE ma.market = ? AND ma.trade_date = a.trade_date)`)
+    params.push(perDate.market)
+  } else {
+    const align = alignWhere("m.seq", filter)
+    if (align) {
+      where.push(align.sql)
+      params.push(...align.params)
+    }
   }
   return { where, params }
 }
 
-/** 对齐条件：这条在（给了 market 就限定该市场的）某个交易日有对齐记录。col 是条目 seq 的列。 */
-function alignWhere(col: string, filter: Pick<FeedFilter, "market" | "tradeDate">): { sql: string, params: Primitive[] } | undefined {
-  if (!filter.market && !filter.tradeDate) return undefined
+/** 对齐行上的条件（别名 a）：市场、单个交易日、交易日区间（含端点）。没有条件返回 undefined。 */
+function alignCond(filter: Pick<FeedFilter, "market" | "tradeDate" | "tradeDateFrom" | "tradeDateTo">): { cond: string[], params: Primitive[] } | undefined {
   const cond: string[] = []
   const params: Primitive[] = []
   if (filter.market) {
@@ -134,24 +143,39 @@ function alignWhere(col: string, filter: Pick<FeedFilter, "market" | "tradeDate"
     cond.push(`a.trade_date = ?`)
     params.push(filter.tradeDate)
   }
-  return { sql: `${col} IN (SELECT a.seq FROM item_align a WHERE ${cond.join(" AND ")})`, params }
+  if (filter.tradeDateFrom) {
+    cond.push(`a.trade_date >= ?`)
+    params.push(filter.tradeDateFrom)
+  }
+  if (filter.tradeDateTo) {
+    cond.push(`a.trade_date <= ?`)
+    params.push(filter.tradeDateTo)
+  }
+  return cond.length ? { cond, params } : undefined
+}
+
+/** 对齐条件：这条在（给了 market 就限定该市场的）某个交易日（区间）有对齐记录。col 是条目 seq 的列。 */
+function alignWhere(col: string, filter: Pick<FeedFilter, "market" | "tradeDate" | "tradeDateFrom" | "tradeDateTo">): { sql: string, params: Primitive[] } | undefined {
+  const c = alignCond(filter)
+  return c ? { sql: `${col} IN (SELECT a.seq FROM item_align a WHERE ${c.cond.join(" AND ")})`, params: c.params } : undefined
 }
 
 /** 过滤条件（来源集合、关键词、标注……）：只能逐行判断。windowed：给「最新 SCAN_WINDOW 行」的窗口查询用（标注条件的写法不同，见下）。 */
-function rowWhere(filter: FeedFilter, windowed: boolean) {
+function rowWhere(filter: FeedFilter, windowed: boolean, days?: { market: Market }) {
   const where: string[] = []
   const params: Primitive[] = []
   if (filter.sourceIds) {
-    where.push(`source_id IN (SELECT value FROM json_each(?))`)
+    where.push(`items.source_id IN (SELECT value FROM json_each(?))`)
     params.push(JSON.stringify(filter.sourceIds))
   }
   for (const term of filter.keywords) {
     // 原始标题与清洗后的标题都找：实体没解码的原标题里搜不到 Trump's（&#8217;），清洗后的搜得到；反过来 Google 的来源后缀只在原标题里
-    where.push(`(title LIKE ? ESCAPE '\\' OR clean_title LIKE ? ESCAPE '\\')`)
+    where.push(`(items.title LIKE ? ESCAPE '\\' OR items.clean_title LIKE ? ESCAPE '\\')`)
     params.push(`%${escapeLike(term)}%`, `%${escapeLike(term)}%`)
   }
-  if (!filter.includeFiltered) where.push(`filter_reason IS NULL`)
-  const align = alignWhere("items.seq", filter)
+  if (!filter.includeFiltered) where.push(`items.filter_reason IS NULL`)
+  // 按日聚合（days）时这一行已经 JOIN 了自己的对齐行（别名 a），交易日条件在 JOIN 上，不再写成子查询
+  const align = days ? undefined : alignWhere("items.seq", filter)
   if (align) {
     where.push(align.sql)
     params.push(...align.params)
@@ -181,7 +205,7 @@ function rowWhere(filter: FeedFilter, windowed: boolean) {
     }
   }
   if (!filter.expand) {
-    const scope = memberScope(filter)
+    const scope = memberScope(filter, days)
     if (scope.where.length) {
       // 先按范围（来源 / 关键词 / 时间）筛、再在范围里收拢：组的代表行 = 范围内 seq 最小的那条。主条目在范围里它就是代表；
       // 不在，范围里最早的成员是代表（后到的成员 seq 只会更大，代表定下后不再变，游标稳定）。
@@ -196,7 +220,7 @@ function rowWhere(filter: FeedFilter, windowed: boolean) {
     const symbols = JSON.stringify(filter.symbols)
     const own = `SELECT seq FROM item_symbols WHERE symbol IN (SELECT value FROM json_each(?))`
     if (filter.expand) {
-      where.push(`seq IN (${own})`)
+      where.push(`items.seq IN (${own})`)
       params.push(symbols)
     } else {
       // 按组判断：先算出带这些标的的组 id 集合 G（组 id = 主条目的 seq），再按 seq ∈ G 或 dup_of ∈ G 匹配，两边分别走主键与 idx_items_dup_of。
@@ -221,6 +245,22 @@ const ORDER = `ORDER BY feed_ts DESC, source_id DESC, item_id DESC`
  * 窗口大小待定：2000 行读一遍在毫秒级，默认全量来源下一页 50 条通常在前几百行里就凑够。
  */
 export const SCAN_WINDOW = 2000
+
+/** 一个交易日的聚合：条数与按类型 / 方向的分布。 */
+export interface DayBucket {
+  tradeDate: string
+  /** 与 GET /api/feed 在同样参数加 tradeDate = 这一天时返回的总条数一致（默认每组一行，expand 时每条一行） */
+  count: number
+  /** 组的影响类型 → 条数（只数有标注的；没标的在 untagged 里） */
+  byImpact: Record<string, number>
+  /** 方向 → 条数 */
+  byDirection: Record<string, number>
+  /** 还没有标注的条数（没配模型、排队中、失败放弃） */
+  untagged: number
+}
+
+/** 按日聚合要求给定市场与交易日区间。 */
+export type DaysFilter = FeedFilter & { market: Market, tradeDateFrom: string, tradeDateTo: string }
 
 export class FeedStore {
   private enrich: EnrichStore
@@ -259,6 +299,40 @@ export class FeedStore {
     const items = rows.slice(0, limit).map(itemFromRow)
     await this.enrich.hydrate(items)
     return { rows: items, hasMore: rows.length > limit, groups: await this.groupsOf(items) }
+  }
+
+  /**
+   * 按交易日聚合（给 K 线打点、区间归因用）：每个对齐到 [tradeDateFrom, tradeDateTo]（含端点）内某天的条目，按那一天计数。
+   * 口径与 page() 完全一致——同一套过滤、同一套「每组一行」的收拢，且收拢是按天各自算的（跟 page 单独查 tradeDate = 这一天时一样：
+   * 同组成员落在不同交易日，每个交易日各出一行代表行），所以每一天的 count 等于 /api/feed 带同样参数与 tradeDate = 这一天的总条数。
+   * 只返回有条目的日子（升序）。不分页：行数 = 区间内有新闻的交易日数。
+   */
+  async days(filter: DaysFilter): Promise<DayBucket[]> {
+    if (filter.sourceIds && !filter.sourceIds.length) return []
+    const range = rangeWhere(filter, undefined, "items.")
+    const row = rowWhere(filter, false, { market: filter.market })
+    const rows = rowsOf<Record<string, any>>(await this.db.prepare(`
+      SELECT a.trade_date AS d, t.impact AS impact, t.direction AS direction, t.tagged AS tagged, COUNT(*) AS n
+      FROM items
+      JOIN item_align a ON a.seq = items.seq AND a.market = ? AND a.trade_date >= ? AND a.trade_date <= ?
+      LEFT JOIN items t ON t.seq = COALESCE(items.dup_of, items.seq)
+      ${clause([...range.where, ...row.where])}
+      GROUP BY a.trade_date, t.impact, t.direction, t.tagged
+      ORDER BY a.trade_date
+    `).all(filter.market, filter.tradeDateFrom, filter.tradeDateTo, ...range.params, ...row.params))
+    const out = new Map<string, DayBucket>()
+    for (const r of rows) {
+      let b = out.get(r.d)
+      if (!b) out.set(r.d, b = { tradeDate: r.d, count: 0, byImpact: {}, byDirection: {}, untagged: 0 })
+      b.count += r.n
+      if (!(r.tagged > 0)) {
+        b.untagged += r.n
+      } else {
+        if (r.impact) b.byImpact[r.impact] = (b.byImpact[r.impact] ?? 0) + r.n
+        if (r.direction) b.byDirection[r.direction] = (b.byDirection[r.direction] ?? 0) + r.n
+      }
+    }
+    return [...out.values()]
   }
 
   /** 这些条目所在的组（成员条目取它的主条目的组）。 */

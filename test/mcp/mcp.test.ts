@@ -21,6 +21,7 @@ const { default: auditGet } = await import("#/api/collector/audit/index.get")
 const { default: feedGet } = await import("#/api/feed/index.get")
 const { default: feedDeepGet } = await import("#/api/feed/deep.get")
 const { default: feedMetaGet } = await import("#/api/feed/meta.get")
+const { default: feedDaysGet } = await import("#/api/feed/days.get")
 const { getObservationStore } = await import("#/collector/runtime")
 
 let server: http.Server
@@ -35,6 +36,7 @@ beforeAll(async () => {
   router.get("/api/feed", feedGet)
   router.get("/api/feed/deep", feedDeepGet)
   router.get("/api/feed/meta", feedMetaGet)
+  router.get("/api/feed/days", feedDaysGet)
   const app = createApp()
   app.use(router)
   server = http.createServer(toNodeListener(app))
@@ -68,6 +70,7 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     expect(tools.map(t => t.name).sort()).toEqual([
       "add_source",
       "export_sources_opml",
+      "feed_days",
       "feed_meta",
       "import_sources_opml",
       "list_audit",
@@ -154,6 +157,28 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     expect(bad.data).toContain("tradeDate")
     const badMarket = await client.callTool({ name: "query_feed", arguments: { market: "hk" } })
     expect(badMarket.isError).toBe(true)
+    await client.close()
+  })
+
+  it("feed_days 与 /api/feed/days：按交易日聚合，count 与 /api/feed 带 tradeDate 的总数一致；参数不对作为失败返回", async () => {
+    const client = await connect()
+    const viaMcp = await call(client, "feed_days", { market: "cn", tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    const viaHttp = await getJson("/api/feed/days?market=cn&tradeDateFrom=2026-11-27&tradeDateTo=2026-12-01")
+    expect(viaMcp.data.days).toEqual(viaHttp.days)
+    expect(viaMcp.data).toMatchObject({ market: "cn", tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    expect(viaMcp.data.days.length).toBeGreaterThan(0)
+    for (const d of viaMcp.data.days) {
+      const feed = await call(client, "query_feed", { market: "cn", tradeDate: d.tradeDate, limit: 200 })
+      expect(d.count, d.tradeDate).toBe(feed.data.items.length)
+      expect(d).toEqual(expect.objectContaining({ byImpact: expect.any(Object), byDirection: expect.any(Object), untagged: expect.any(Number) }))
+    }
+    // 区间查询接口（tradeDateFrom / To）两个入口一致
+    const range = await call(client, "query_feed", { market: "cn", tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    expect(range.data.items.map((i: any) => i.itemId)).toEqual((await getJson("/api/feed?market=cn&tradeDateFrom=2026-11-27&tradeDateTo=2026-12-01")).items.map((i: any) => i.itemId))
+    const bad = await call(client, "feed_days", { tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    expect(bad.res.isError).toBe(true)
+    expect(bad.data).toContain("market")
+    expect((await fetch(`${base()}/api/feed/days?market=cn`)).status).toBe(400)
     await client.close()
   })
 

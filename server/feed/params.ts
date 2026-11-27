@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer"
 import type { FeedCursor } from "./store"
 import { SYMBOL_ID } from "#/enrich/symbols"
+import { marketOfSymbol } from "#/enrich/align"
 import { DIRECTIONS, MARKETS } from "#/enrich/types"
 import type { Direction, Market } from "#/enrich/types"
 import { InputError } from "#/registry/spec"
@@ -39,10 +40,18 @@ export interface FeedParams {
   includeInactive: boolean
   /** 展开：同一事件的多条报道每条单独出现；默认每组只出主条目一行 */
   expand: boolean
-  /** 市场（cn / us / crypto）：只要按这个市场对齐过交易日的条目；与 tradeDate 一起用时，是「这个市场的这个交易日」 */
+  /**
+   * 市场（cn / us / crypto）：只要按这个市场对齐过交易日的条目；与 tradeDate / tradeDateFrom / tradeDateTo 一起用时，是「这个市场的这些交易日」。
+   * 给了 symbol 与交易日条件却没给 market 时，由标的的场所推出（600519.XSHG → cn，AAPL.XNAS → us，BTCUSDT.BINANCE → crypto），
+   * 标的各自只匹配自己市场的对齐：K 线上点（交易日，标的）不会取到「这个标的在另一个市场的交易日」凑巧相同的新闻。
+   */
   market?: Market
   /** 交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场） */
   tradeDate?: string
+  /** 交易日区间的起点（含），与 market 配合；口径同 tradeDate（按对齐的交易日，不是发布时间戳） */
+  tradeDateFrom?: string
+  /** 交易日区间的终点（含） */
+  tradeDateTo?: string
   /** 影响类型（分类表里的名称，见 GET /api/feed/meta）；组的标注命中其中之一 */
   impact: string[]
   /** 方向：positive / negative / neutral（对新闻本身的读法，不是涨跌预测）；组的标注命中其中之一 */
@@ -87,13 +96,25 @@ export function timeParam(value: unknown, label: string): number | undefined {
 }
 
 /** YYYY-MM-DD，且是真实存在的日期（2026-02-30 不行）。 */
-function tradeDateParam(value: unknown): string | undefined {
+function tradeDateParam(value: unknown, label = "tradeDate"): string | undefined {
   if (value === undefined || value === null || value === "") return undefined
   const v = typeof value === "string" ? value.trim() : ""
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`)) || new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) !== v) {
-    throw new InputError("tradeDate 要写成 YYYY-MM-DD 的有效日期，如 2026-11-30")
+    throw new InputError(`${label} 要写成 YYYY-MM-DD 的有效日期，如 2026-11-30`)
   }
   return v
+}
+
+/**
+ * 交易日条件里没给 market、但给了 symbol：由标的的场所推出市场。
+ * 标的都推得出且同属一个市场 → 用它；跨了多个市场 → 拒绝（一个交易日只在一个市场里有意义，请带 market 或按市场分开查）；
+ * 有场所不认识 → 不推（保持原样：任一市场对齐到这天的都算）。
+ */
+function inferMarket(symbols: string[]): Market | undefined {
+  const markets = new Set<Market | undefined>(symbols.map(s => marketOfSymbol(s)))
+  if (!markets.size || markets.has(undefined)) return undefined
+  if (markets.size > 1) throw new InputError("symbol 跨了多个市场，而交易日是各市场自己的：请带 market，或按市场分开查")
+  return [...markets][0]
 }
 
 function marketParam(value: unknown): Market | undefined {
@@ -141,10 +162,17 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
   const from = timeParam(raw.from, "from")
   const to = timeParam(raw.to, "to")
   if (from !== undefined && to !== undefined && from >= to) throw new InputError("from 必须早于 to")
+  const symbol = symbols(raw.symbol)
+  let market = marketParam(raw.market)
+  const tradeDate = tradeDateParam(raw.tradeDate)
+  const tradeDateFrom = tradeDateParam(raw.tradeDateFrom, "tradeDateFrom")
+  const tradeDateTo = tradeDateParam(raw.tradeDateTo, "tradeDateTo")
+  if (tradeDateFrom && tradeDateTo && tradeDateFrom > tradeDateTo) throw new InputError("tradeDateFrom 不能晚于 tradeDateTo")
+  if (!market && symbol.length && (tradeDate || tradeDateFrom || tradeDateTo)) market = inferMarket(symbol)
   return {
     source: list(raw.source, "source"),
     category: list(raw.category, "category"),
-    symbol: symbols(raw.symbol),
+    symbol,
     keywords,
     from,
     to,
@@ -153,8 +181,10 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
     cursor: typeof raw.cursor === "string" && raw.cursor ? decodeCursor(raw.cursor) : undefined,
     includeInactive: bool(raw.includeInactive),
     expand: bool(raw.expand),
-    market: marketParam(raw.market),
-    tradeDate: tradeDateParam(raw.tradeDate),
+    market,
+    tradeDate,
+    tradeDateFrom,
+    tradeDateTo,
     impact: list(raw.impact, "impact"),
     direction: directions(raw.direction),
     includeFiltered: bool(raw.includeFiltered),

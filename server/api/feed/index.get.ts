@@ -16,7 +16,11 @@ import { guarded } from "#/registry/http"
  *   expand=1       同一事件的多条报道每条单独出现；默认聚成一组、每组一行（带 sourcesCount 与 members）：先按 source / category / includeInactive 筛，再在范围里收拢，
  *                  代表行是范围内最早的那条（主条目在范围外时是范围里最早的成员，groupId 仍是主条目的 seq）；范围 = 来源 / 分类 / 停用 + q + from / to（since 与 cursor 一样是位置条件，不进范围）；标的按组判断
  *   market         cn / us / crypto：只要按这个市场对齐过交易日的条目（#2188 补充）
+ *                  给了 symbol 与交易日条件（tradeDate / tradeDateFrom / tradeDateTo）却没给 market 时，由标的的场所推出市场（600519.XSHG → cn、AAPL.XNAS → us、BTCUSDT.BINANCE → crypto）；
+ *                  symbol 跨了多个市场又没给 market 是 400。K 线上点（交易日，标的）不必自己带 market，也不会取到另一个市场的交易日凑巧相同的新闻
  *   tradeDate      交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场）。收盘后与休市日的新闻对齐到下一个交易日
+ *   tradeDateFrom / tradeDateTo  交易日区间（含端点），口径同 tradeDate（按对齐的交易日，不是 from / to 那样按发布时间戳），与 market 配合。
+ *                  同一组的成员落在不同交易日时，区间查询里这一组只出一行（区间内最早的成员）；要按天各出一行、或要每天的条数，用 GET /api/feed/days
  *   impact         影响类型（分类表里的名称，见 GET /api/feed/meta），逗号分隔或重复；组的标注命中其中之一。标注挂在主条目上，按组判断
  *   direction      positive / negative / neutral，逗号分隔或重复；对这条新闻本身的读法（正面 / 负面 / 中性），不是涨跌预测
  *   includeFiltered=1  含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列），每条带 filterReason；默认不含

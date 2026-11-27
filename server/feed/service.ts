@@ -1,11 +1,11 @@
 import { encodeCursor, normalizeFeedParams } from "./params"
 import type { FeedParams } from "./params"
-import type { FeedStore } from "./store"
+import type { DayBucket, FeedFilter, FeedStore } from "./store"
 import { InputError } from "#/registry/spec"
 import type { SourceDescriptor } from "#/registry/registry"
 import type { IngestedItem } from "#/collector/store"
 import type { GroupInfo, GroupMember } from "#/enrich/store"
-import type { Align, FilterReason, ItemTags } from "#/enrich/types"
+import type { Align, FilterReason, ItemTags, Market } from "#/enrich/types"
 import { DIRECTIONS, MARKETS, SESSIONS } from "#/enrich/types"
 import { MARKET_LABELS } from "#/enrich/align"
 import { FILTER_REASON_LABELS } from "#/enrich/filter"
@@ -82,6 +82,19 @@ export interface FeedResponse {
   latestSeq: number
   now: number
 }
+
+export interface DaysResponse {
+  /** 用的市场（给了 market 就是它，否则由 symbol 的场所推出） */
+  market: Market
+  tradeDateFrom: string
+  tradeDateTo: string
+  /** 区间内有新闻的交易日，升序；没有新闻的日子不出 */
+  days: DayBucket[]
+  now: number
+}
+
+/** 日聚合的区间上限（自然日）。待定：约三年的交易日（每年约 250 个）；按 idx_item_align_date 扫一段区间，没有按大库实测定。 */
+export const MAX_DAYS_SPAN = 800
 
 export interface FeedServiceDeps {
   store: FeedStore
@@ -203,6 +216,28 @@ export function streamMatcher(params: FeedParams, descs: SourceDescriptor[]) {
     && (!symbols.size || item.symbols.some(s => symbols.has(s)))
 }
 
+/** 查询参数 → 存储层的过滤条件（page 与 days 共用，口径不能分叉）。 */
+function filterOf(params: FeedParams, sourceIds: string[] | null): FeedFilter {
+  return {
+    sourceIds,
+    from: params.from,
+    to: params.to,
+    since: params.since,
+    keywords: params.keywords,
+    symbols: params.symbol,
+    expand: params.expand,
+    includeFiltered: params.includeFiltered,
+    market: params.market,
+    tradeDate: params.tradeDate,
+    tradeDateFrom: params.tradeDateFrom,
+    tradeDateTo: params.tradeDateTo,
+    impact: params.impact,
+    direction: params.direction,
+  }
+}
+
+const dayNumber = (d: string) => Date.parse(`${d}T00:00:00Z`) / 86_400_000
+
 export function createFeedService(deps: FeedServiceDeps) {
   const { store, describe } = deps
   const clock = deps.clock ?? Date.now
@@ -215,24 +250,7 @@ export function createFeedService(deps: FeedServiceDeps) {
       const now = clock()
       const descs = await describe()
       const sourceIds = resolveScope(params, descs)
-      const { rows, hasMore, groups } = await store.page(
-        {
-          sourceIds,
-          from: params.from,
-          to: params.to,
-          since: params.since,
-          keywords: params.keywords,
-          symbols: params.symbol,
-          expand: params.expand,
-          includeFiltered: params.includeFiltered,
-          market: params.market,
-          tradeDate: params.tradeDate,
-          impact: params.impact,
-          direction: params.direction,
-        },
-        params.limit,
-        params.cursor,
-      )
+      const { rows, hasMore, groups } = await store.page(filterOf(params, sourceIds), params.limit, params.cursor)
       const byId = new Map(descs.map(d => [d.id, d]))
       const last = rows.at(-1)
       return {
@@ -241,6 +259,25 @@ export function createFeedService(deps: FeedServiceDeps) {
         latestSeq,
         now,
       }
+    },
+
+    /**
+     * 按交易日聚合（GET /api/feed/days）：市场（或由 symbol 推出）+ 交易日区间 → 每个有新闻的交易日的条数、按影响类型与方向的分布。
+     * 其余筛选（symbol、source、category、q、impact、direction、includeFiltered、expand……）与 query 同一套，所以某一天的 count 等于
+     * query 带同样参数与 tradeDate = 这一天的总条数。limit / cursor / since 对它没有意义，不看。
+     */
+    async days(raw: Record<string, unknown>): Promise<DaysResponse> {
+      const params = normalizeFeedParams(raw)
+      const market = params.market
+      if (!market) throw new InputError("需要 market（cn / us / crypto），或给 symbol 由它的场所推出市场：交易日是各市场自己的")
+      const from = params.tradeDateFrom ?? params.tradeDate
+      const to = params.tradeDateTo ?? params.tradeDate
+      if (!from || !to) throw new InputError("需要交易日区间：tradeDateFrom 与 tradeDateTo 都要给（或只给 tradeDate 表示一天）")
+      if (dayNumber(to) - dayNumber(from) + 1 > MAX_DAYS_SPAN) throw new InputError(`交易日区间最长 ${MAX_DAYS_SPAN} 天`)
+      const descs = await describe()
+      const filter = filterOf({ ...params, since: undefined }, resolveScope(params, descs))
+      const days = await store.days({ ...filter, market, tradeDateFrom: from, tradeDateTo: to, tradeDate: undefined })
+      return { market, tradeDateFrom: from, tradeDateTo: to, days, now: clock() }
     },
 
     /**
