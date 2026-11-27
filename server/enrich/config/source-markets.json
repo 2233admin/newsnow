@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "note": "没有标的的新闻按来源的默认市场对齐交易日。键是来源 id，结尾带 * 的是前缀；先写的先匹配；都没匹配上用 default。来源 id 见 shared/sources.json（内置源）与 user:<slug>（用户源，预置订阅包的 slug 以 preset- 开头）。有标的的新闻按标的的场所定市场，不看这里。",
+  "default": "cn",
+  "sources": [
+    { "match": "user:preset-bloomberg*", "market": "us" },
+    { "match": "user:preset-reuters*", "market": "us" },
+    { "match": "user:preset-ap-*", "market": "us" },
+    { "match": "user:preset-techcrunch*", "market": "us" },
+    { "match": "user:preset-reddit-*", "market": "us" },
+    { "match": "user:preset-youtube-*", "market": "us" },
+    { "match": "hackernews", "market": "us" },
+    { "match": "producthunt", "market": "us" }
+  ]
+}

@@ -27,6 +27,8 @@
     "feed:check": "tsx ./scripts/feed-check.ts",
     "enrich:backfill": "tsx ./scripts/enrich-backfill.ts",
     "enrich:eval": "tsx ./scripts/enrich-eval.ts",
+    "enrich:tag": "tsx ./scripts/enrich-tag.ts",
+    "enrich:tag-eval": "tsx ./scripts/enrich-tag-eval.ts",
     "enrich:dict": "cross-env NODE_OPTIONS=--use-env-proxy tsx ./scripts/gen-symbol-dict.ts",
     "sources:patrol": "tsx ./scripts/sources-patrol.ts"
   },

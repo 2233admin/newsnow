@@ -15,9 +15,15 @@ import { guarded } from "#/registry/http"
  *                  条目或它所在组的任一成员带其中之一就命中
  *   expand=1       同一事件的多条报道每条单独出现；默认聚成一组、每组一行（带 sourcesCount 与 members）：先按 source / category / includeInactive 筛，再在范围里收拢，
  *                  代表行是范围内最早的那条（主条目在范围外时是范围里最早的成员，groupId 仍是主条目的 seq）；范围 = 来源 / 分类 / 停用 + q + from / to（since 与 cursor 一样是位置条件，不进范围）；标的按组判断
+ *   market         cn / us / crypto：只要按这个市场对齐过交易日的条目（#2188 补充）
+ *   tradeDate      交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场）。收盘后与休市日的新闻对齐到下一个交易日
+ *   impact         影响类型（分类表里的名称，见 GET /api/feed/meta），逗号分隔或重复；组的标注命中其中之一。标注挂在主条目上，按组判断
+ *   direction      bull / bear / neutral，逗号分隔或重复；对这条新闻本身的读法，不是涨跌预测
+ *   includeFiltered=1  含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列），每条带 filterReason；默认不含
  *   limit          每页条数，1–200，默认 50
  *   cursor         上一页响应的 nextCursor
  *   includeInactive=1  含停用与已删除的源的历史条目
+ * 每条另带 align（对齐交易日）、tags（影响类型 / 方向 / 一句话要点 / 题材，没标过是 null）、filterReason，形状见 server/feed/service.ts 的 FeedItemView。
  * 排序：feedTs 倒序，同一毫秒按 sourceId、itemId 倒序（见 server/feed/store.ts）。
  */
 export default defineEventHandler(event => guarded(event, async () => (await getFeed()).service.query(getQuery(event))))

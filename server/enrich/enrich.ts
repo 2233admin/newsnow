@@ -1,11 +1,14 @@
 import type { Database } from "db0"
 import type { IngestedItem, ItemEnricher } from "../collector/store"
+import { alignItem } from "./align"
 import { cleanTitle } from "./clean"
 import { FUZZY_WINDOW_MS, MIN_FUZZY_LENGTH, MIN_KEY_LENGTH, TITLE_WINDOW_MS, URL_WINDOW_MS, keyInfo, similar, titleKey } from "./dedup"
 import type { KeyInfo } from "./dedup"
+import { filterTitle } from "./filter"
 import { EnrichStore } from "./store"
 import type { Candidate, EnrichedRow } from "./store"
 import { extractSymbols } from "./symbols"
+import type { Align, FilterReason } from "./types"
 import { canonicalUrl } from "./url"
 
 /**
@@ -20,6 +23,8 @@ import { canonicalUrl } from "./url"
  * - 同一个源里重复的也并（同一条快讯被源站重发），来源数按不同 source_id 算。
  * - 成员的 dup_of 永远直接指向主条目（没有链）。
  * - 富化失败（抛错）的条目留 enriched = 0，不影响入库；回填命令会按 seq 顺序补上，规则与实时一样。
+ * - 规则层与对齐（#2188 补充，filter.ts / align.ts）也在这里算：确定性、不联网，每条自己判断（过滤原因按条记，被过滤的照常参与分组）；
+ *   对齐按条目自己的信息流时间（feedTs）与它的标的涉及的市场算。批量标注与深读要调模型，不在这里（见 tagger.ts、deep.ts）。
  */
 
 /** 富化规则的版本。改了规则要加一，回填的「重算标的」模式按它找旧的。 */
@@ -33,7 +38,11 @@ export const BACKFILL_QUIET_MS = 5 * 60_000
 /** 库里最近一次采集写入在安静窗口之内：服务多半还在跑。 */
 export const collectorLooksActive = (lastWriteAt: number, now: number) => now - lastWriteAt < BACKFILL_QUIET_MS
 
-export const ENRICH_VERSION = 1
+/**
+ * 2：加了规则层（filter_reason）与对齐（item_align）。版本 1 的存量条目没有这两样，用 `pnpm enrich:backfill --rules` 补
+ * （只写这两样，不动分组，所以不要求停服务；日历或规则改了加 --all 全部重算）。
+ */
+export const ENRICH_VERSION = 2
 
 interface Working {
   item: IngestedItem
@@ -44,12 +53,20 @@ interface Working {
   info: KeyInfo | undefined
   symbols: string[]
   dupOf: number | null
+  filterReason: FilterReason | null
+  align: Align[]
+}
+
+/** 规则层与对齐：只取决于标题、标的、来源与时间，同样的输入永远同样的结果。 */
+function rulesOf(item: IngestedItem, cleanTitleText: string, symbols: string[]): { filterReason: FilterReason | null, align: Align[] } {
+  return { filterReason: filterTitle(cleanTitleText, symbols), align: alignItem(item.feedTs, symbols, item.sourceId) }
 }
 
 function compute(item: IngestedItem): Working {
   const cleaned = cleanTitle(item.title, item.url)
   const canon = canonicalUrl(cleaned.origUrl ?? item.url)
   const key = titleKey(cleaned.title)
+  const symbols = extractSymbols(cleaned.title)
   return {
     item,
     clean: cleaned.title,
@@ -57,8 +74,9 @@ function compute(item: IngestedItem): Working {
     canon,
     key,
     info: undefined,
-    symbols: extractSymbols(cleaned.title),
+    symbols,
     dupOf: null,
+    ...rulesOf(item, cleaned.title, symbols),
   }
 }
 
@@ -68,6 +86,11 @@ export interface Enricher extends ItemEnricher {
   resymbol: (batch?: number, onProgress?: (done: number) => void) => Promise<number>
   /** 已入库的条目标题变了（再次采到）：清洗标题、标的、去重键跟着重算；seq 与分组不动。 */
   retitle: (items: IngestedItem[]) => Promise<void>
+  /**
+   * 只补算规则层（过滤原因）与对齐，不动分组、标题、标的。默认只处理富化版本低于 ENRICH_VERSION 的存量条目；all 为真时全部重算
+   * （改了休市日表、来源默认市场或过滤规则之后）。返回处理条数。
+   */
+  reapplyRules: (batch?: number, onProgress?: (done: number) => void, all?: boolean) => Promise<number>
   /** 给还没富化的历史条目补上（按 seq 顺序，规则与实时一样）。返回处理条数。 */
   backfill: (batch?: number, onProgress?: (done: number) => void) => Promise<number>
 }
@@ -154,6 +177,8 @@ export function createEnricher(db: Database): Enricher {
       titleKey: w.key || null,
       dupOf: w.dupOf,
       symbols: w.symbols,
+      filterReason: w.filterReason,
+      align: w.align,
     }))
     await store.save(rows, ENRICH_VERSION)
     for (const w of work) {
@@ -161,6 +186,8 @@ export function createEnricher(db: Database): Enricher {
       w.item.origUrl = w.origUrl
       w.item.dupOf = w.dupOf
       w.item.symbols = w.symbols
+      w.item.filterReason = w.filterReason
+      w.item.align = w.align
       w.item.enriched = ENRICH_VERSION
     }
   }
@@ -172,7 +199,8 @@ export function createEnricher(db: Database): Enricher {
     await store.saveSymbolsOnly(todo.map((item) => {
       const cleaned = cleanTitle(item.title, item.url)
       infoCache.delete(item.seq)
-      return { seq: item.seq, cleanTitle: cleaned.title, origUrl: cleaned.origUrl, symbols: extractSymbols(cleaned.title), titleKey: titleKey(cleaned.title) || null }
+      const symbols = extractSymbols(cleaned.title)
+      return { seq: item.seq, cleanTitle: cleaned.title, origUrl: cleaned.origUrl, symbols, titleKey: titleKey(cleaned.title) || null, ...rulesOf(item, cleaned.title, symbols) }
     }))
   }
 
@@ -197,7 +225,8 @@ export function createEnricher(db: Database): Enricher {
       if (!items.length) return total
       await store.saveSymbolsOnly(items.map((item) => {
         const cleaned = cleanTitle(item.title, item.url)
-        return { seq: item.seq, cleanTitle: cleaned.title, origUrl: cleaned.origUrl, symbols: extractSymbols(cleaned.title) }
+        const symbols = extractSymbols(cleaned.title)
+        return { seq: item.seq, cleanTitle: cleaned.title, origUrl: cleaned.origUrl, symbols, ...rulesOf(item, cleaned.title, symbols) }
       }))
       after = items.at(-1)!.seq
       total += items.length
@@ -205,5 +234,22 @@ export function createEnricher(db: Database): Enricher {
     }
   }
 
-  return { store, enrich, retitle, backfill, resymbol }
+  async function reapplyRules(batch = 500, onProgress?: (done: number) => void, all = false): Promise<number> {
+    let after = 0
+    let total = 0
+    for (;;) {
+      const items = await store.rulesPending(after, batch, ENRICH_VERSION, all)
+      if (!items.length) return total
+      await store.hydrate(items)
+      await store.saveRules(items.map((item) => {
+        // 清洗标题与标的在库里已经有了（没重算：这个模式不动它们）；标题用库里的清洗结果
+        return { seq: item.seq, ...rulesOf(item, item.cleanTitle ?? item.title, item.symbols) }
+      }), ENRICH_VERSION)
+      after = items.at(-1)!.seq
+      total += items.length
+      onProgress?.(total)
+    }
+  }
+
+  return { store, enrich, retitle, backfill, resymbol, reapplyRules }
 }

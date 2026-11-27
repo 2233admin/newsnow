@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "readAt": "2026-11-27",
+  "note": "交易日历与时段。XartLab/KATANAview#2165「决定 2」（交易日历来源）定下来之后，两处应共用一份：把这个文件当作那一份的初稿，改的时候两边一起改。years 里列出的年份才算「休市日已核对完整」；不在其中的年份只按周末算，并会在日志里警告一次。可用环境变量 ENRICH_CONFIG_DIR 指向一个放同名文件的目录来覆盖（见 server/enrich/config.ts）。",
+  "markets": {
+    "cn": {
+      "venues": [
+        "XSHG",
+        "XSHE",
+        "BJSE"
+      ],
+      "timezone": "Asia/Shanghai",
+      "open": [
+        [
+          "09:30",
+          "11:30"
+        ],
+        [
+          "13:00",
+          "15:00"
+        ]
+      ],
+      "hoursSource": "上交所《交易规则》第 2.4.2 条（上证发〔2018〕59号，2018-08-06，https://www.sse.com.cn/lawandrules/sselawsrules2025/repeal/rules/c/c_20180806_10784917.shtml ，2026-11-27 经搜索结果摘要读到条文，该通知已被后续修订取代，现行条文待核对）：9:15–9:25 开盘集合竞价，9:30–11:30、13:00–14:57 连续竞价，14:57–15:00 收盘集合竞价；本表按任务口径把 9:30 前算盘前、9:30–11:30 与 13:00–15:00 算盘中。深交所、北交所同口径，未逐所核对（待核对）。",
+      "years": [
+        2026
+      ],
+      "closedSource": "上海证券交易所《关于上海证券交易所2026年部分节假日休市安排的通知》（上证公告〔2025〕45号，2025-12-22），https://www.sse.com.cn/disclosure/announcement/general/c/c_20251222_10802507.shtml ，读取日期 2026-11-27，元旦至国庆七项全部取自该通知。2026-09-17 沪深北三所的中秋、国庆休市公告（经同花顺、财联社转载）与之一致。深交所《关于2026年部分节假日放假和休市安排的通知》（证监办发〔2025〕130号）与北交所（北证公告〔2025〕58号）的劳动节安排与上交所一致，其余各项未逐项对照深北两所原文（待核对）。周末（含调休上班的周六日）交易所一律不开市，不用列。",
+      "closed": [
+        {
+          "from": "2026-01-01",
+          "to": "2026-01-03",
+          "name": "元旦"
+        },
+        {
+          "from": "2026-02-15",
+          "to": "2026-02-23",
+          "name": "春节"
+        },
+        {
+          "from": "2026-04-04",
+          "to": "2026-04-06",
+          "name": "清明节"
+        },
+        {
+          "from": "2026-05-01",
+          "to": "2026-05-05",
+          "name": "劳动节"
+        },
+        {
+          "from": "2026-06-19",
+          "to": "2026-06-21",
+          "name": "端午节"
+        },
+        {
+          "from": "2026-09-25",
+          "to": "2026-09-27",
+          "name": "中秋节"
+        },
+        {
+          "from": "2026-10-01",
+          "to": "2026-10-07",
+          "name": "国庆节"
+        }
+      ]
+    },
+    "us": {
+      "venues": [
+        "XNAS",
+        "XNYS",
+        "ARCX",
+        "XASE",
+        "BATS"
+      ],
+      "timezone": "America/New_York",
+      "open": [
+        [
+          "09:30",
+          "16:00"
+        ]
+      ],
+      "hoursSource": "NYSE Core Trading Session 9:30 a.m.–4:00 p.m. ET，https://www.nyse.com/trade/hours-calendars ，读取日期 2026-11-27。盘前、盘后交易时段（4:00–9:30、16:00–20:00）不单列，按任务口径盘前 = 9:30 前、盘后 = 收盘后。",
+      "years": [
+        2026
+      ],
+      "closedSource": "NYSE Holidays & Trading Hours，https://www.nyse.com/trade/hours-calendars ，读取日期 2026-11-27。Nasdaq 与 NYSE 同一休市安排（Fidelity、Kiplinger 转述，未读 Nasdaq 官方页，待核对）。注意：Kiplinger 称 2026-07-02 提前收盘，NYSE 页只列 11-27 与 12-24 两个提前收盘日，这里以 NYSE 页为准。",
+      "earlyCloseSource": "NYSE 页脚注：2026-11-27（感恩节次日）与 2026-12-24 在 1:00 p.m. ET 提前收盘。",
+      "earlyClose": {
+        "2026-11-27": "13:00",
+        "2026-12-24": "13:00"
+      },
+      "closed": [
+        {
+          "from": "2026-01-01",
+          "to": "2026-01-01",
+          "name": "New Year's Day"
+        },
+        {
+          "from": "2026-01-19",
+          "to": "2026-01-19",
+          "name": "Martin Luther King, Jr. Day"
+        },
+        {
+          "from": "2026-02-16",
+          "to": "2026-02-16",
+          "name": "Washington's Birthday"
+        },
+        {
+          "from": "2026-04-03",
+          "to": "2026-04-03",
+          "name": "Good Friday"
+        },
+        {
+          "from": "2026-05-25",
+          "to": "2026-05-25",
+          "name": "Memorial Day"
+        },
+        {
+          "from": "2026-06-19",
+          "to": "2026-06-19",
+          "name": "Juneteenth National Independence Day"
+        },
+        {
+          "from": "2026-07-03",
+          "to": "2026-07-03",
+          "name": "Independence Day (observed)"
+        },
+        {
+          "from": "2026-09-07",
+          "to": "2026-09-07",
+          "name": "Labor Day"
+        },
+        {
+          "from": "2026-11-26",
+          "to": "2026-11-26",
+          "name": "Thanksgiving Day"
+        },
+        {
+          "from": "2026-12-25",
+          "to": "2026-12-25",
+          "name": "Christmas Day"
+        }
+      ]
+    },
+    "crypto": {
+      "venues": [
+        "BINANCE"
+      ],
+      "timezone": "UTC",
+      "tzNote": "加密币 24/7，按该时区的自然日算交易日，时段一律 open。要改成别的时区（如 Asia/Shanghai）改这里。"
+    }
+  }
+}

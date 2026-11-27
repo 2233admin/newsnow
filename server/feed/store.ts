@@ -3,6 +3,7 @@ import { ITEM_SELECT, itemFromRow } from "#/collector/store"
 import type { IngestedItem } from "#/collector/store"
 import { EnrichStore } from "#/enrich/store"
 import type { GroupInfo } from "#/enrich/store"
+import type { Direction, Market } from "#/enrich/types"
 
 /**
  * 信息流的读取（#2186）。只读 items 表，写在 collector/store.ts。
@@ -38,6 +39,16 @@ export interface FeedFilter {
   symbols: string[]
   /** true：每条都单独出现（成员也算）；false：每组只出主条目一行（dup_of 为空的） */
   expand: boolean
+  /** 含规则层过滤掉的条目；默认（不给）不含。被过滤的条目在按组收拢时当作「不在范围里」，同来源范围一个道理 */
+  includeFiltered?: boolean
+  /** 按这个市场对齐过交易日的条目（与 tradeDate 一起用时限定在这个市场的这一天） */
+  market?: Market
+  /** 条目在某个市场里对齐到这个交易日（YYYY-MM-DD） */
+  tradeDate?: string
+  /** 组的影响类型命中其中之一（标注挂在主条目上，按组判断，同标的）。空 / 不给 = 不限 */
+  impact?: string[]
+  /** 组的方向命中其中之一 */
+  direction?: Direction[]
 }
 
 export interface FeedPage {
@@ -101,11 +112,33 @@ function memberScope(filter: FeedFilter) {
     where.push(`m.feed_ts < ?`)
     params.push(filter.to)
   }
+  if (!filter.includeFiltered) where.push(`m.filter_reason IS NULL`)
+  const align = alignWhere("m.seq", filter)
+  if (align) {
+    where.push(align.sql)
+    params.push(...align.params)
+  }
   return { where, params }
 }
 
-/** 过滤条件（来源集合、关键词）：只能逐行判断。 */
-function rowWhere(filter: FeedFilter) {
+/** 对齐条件：这条在（给了 market 就限定该市场的）某个交易日有对齐记录。col 是条目 seq 的列。 */
+function alignWhere(col: string, filter: Pick<FeedFilter, "market" | "tradeDate">): { sql: string, params: Primitive[] } | undefined {
+  if (!filter.market && !filter.tradeDate) return undefined
+  const cond: string[] = []
+  const params: Primitive[] = []
+  if (filter.market) {
+    cond.push(`a.market = ?`)
+    params.push(filter.market)
+  }
+  if (filter.tradeDate) {
+    cond.push(`a.trade_date = ?`)
+    params.push(filter.tradeDate)
+  }
+  return { sql: `${col} IN (SELECT a.seq FROM item_align a WHERE ${cond.join(" AND ")})`, params }
+}
+
+/** 过滤条件（来源集合、关键词、标注……）：只能逐行判断。windowed：给「最新 SCAN_WINDOW 行」的窗口查询用（标注条件的写法不同，见下）。 */
+function rowWhere(filter: FeedFilter, windowed: boolean) {
   const where: string[] = []
   const params: Primitive[] = []
   if (filter.sourceIds) {
@@ -116,6 +149,36 @@ function rowWhere(filter: FeedFilter) {
     // 原始标题与清洗后的标题都找：实体没解码的原标题里搜不到 Trump's（&#8217;），清洗后的搜得到；反过来 Google 的来源后缀只在原标题里
     where.push(`(title LIKE ? ESCAPE '\\' OR clean_title LIKE ? ESCAPE '\\')`)
     params.push(`%${escapeLike(term)}%`, `%${escapeLike(term)}%`)
+  }
+  if (!filter.includeFiltered) where.push(`filter_reason IS NULL`)
+  const align = alignWhere("items.seq", filter)
+  if (align) {
+    where.push(align.sql)
+    params.push(...align.params)
+  }
+  if (filter.impact?.length || filter.direction?.length) {
+    // 标注挂在组的主条目上，按组判断（组 id = 主条目的 seq）。写法有两种，各有一种病态情形（200 万行级的合成库上量过，见 test/enrich/perf.test.ts）：
+    // - 逐行探主键（窗口查询用）：对每个候选行查它所在组的主条目是否命中。常见的类型几百行里就凑够一页，快；罕见的类型要扫完整个信息流索引，慢。
+    // - 先取出命中的主条目集合 G，再按 seq ∈ G 或 dup_of ∈ G 匹配（兜底的整查询用，写法同下面的标的，走主键与 idx_items_dup_of）：集合小（罕见）时快，集合大（常见）时光是建集合就慢。
+    // 窗口里凑够一页说明命中的不稀少，用前一种；窗口里凑不够才落到整查询，命中的多半稀少，用后一种。
+    const cond: string[] = []
+    const own: Primitive[] = []
+    if (filter.impact?.length) {
+      cond.push(`t.impact IN (SELECT value FROM json_each(?))`)
+      own.push(JSON.stringify(filter.impact))
+    }
+    if (filter.direction?.length) {
+      cond.push(`t.direction IN (SELECT value FROM json_each(?))`)
+      own.push(JSON.stringify(filter.direction))
+    }
+    if (windowed) {
+      where.push(`EXISTS (SELECT 1 FROM items t WHERE t.seq = COALESCE(items.dup_of, items.seq) AND ${cond.join(" AND ")})`)
+      params.push(...own)
+    } else {
+      const tagged = `SELECT t.seq FROM items t WHERE ${cond.join(" AND ")}`
+      where.push(`(items.seq IN (${tagged}) OR items.dup_of IN (${tagged}))`)
+      params.push(...own, ...own)
+    }
   }
   if (!filter.expand) {
     const scope = memberScope(filter)
@@ -175,7 +238,8 @@ export class FeedStore {
   async page(filter: FeedFilter, limit: number, cursor?: FeedCursor): Promise<FeedPage> {
     if (filter.sourceIds && !filter.sourceIds.length) return { rows: [], hasMore: false, groups: new Map() }
     const range = rangeWhere(filter, cursor)
-    const row = rowWhere(filter)
+    const row = rowWhere(filter, true)
+    const rowFull = rowWhere(filter, false)
     const run = async (sql: string, params: Primitive[]) => rowsOf<Record<string, any>>(await this.db.prepare(sql).all(...params))
     let rows: Record<string, any>[] = []
     let done = false
@@ -189,8 +253,8 @@ export class FeedStore {
     }
     if (!done) {
       rows = await run(`
-        SELECT ${ITEM_SELECT} FROM items ${clause([...range.where, ...row.where])} ${ORDER} LIMIT ?
-      `, [...range.params, ...row.params, limit + 1])
+        SELECT ${ITEM_SELECT} FROM items ${clause([...range.where, ...rowFull.where])} ${ORDER} LIMIT ?
+      `, [...range.params, ...rowFull.params, limit + 1])
     }
     const items = rows.slice(0, limit).map(itemFromRow)
     await this.enrich.hydrate(items)
@@ -211,7 +275,7 @@ export class FeedStore {
    * SSE 用：这个组（主条目 seq = groupId）里有没有比 beforeSeq 更早的、满足订阅范围（来源、关键词）的条目，
    * 有就说明客户端已经见过这个组的代表行，新成员只推 merge。
    */
-  async earlierInScope(groupId: number, beforeSeq: number, filter: Pick<FeedFilter, "sourceIds" | "keywords">): Promise<boolean> {
+  async earlierInScope(groupId: number, beforeSeq: number, filter: Pick<FeedFilter, "sourceIds" | "keywords" | "includeFiltered">): Promise<boolean> {
     const scope = memberScope({ ...filter, symbols: [], expand: false })
     const row = await this.db.prepare(`
       SELECT 1 AS hit FROM items m WHERE (m.seq = ? OR m.dup_of = ?) AND m.seq < ? ${scope.where.length ? `AND ${scope.where.join(" AND ")}` : ""} LIMIT 1
@@ -229,7 +293,7 @@ export class FeedStore {
   }
 
   /** SSE 用：这个组在订阅范围（来源、关键词）里的代表行（范围内 seq 最小的那条）；范围里没有返回 undefined。 */
-  async representative(groupId: number, filter: Pick<FeedFilter, "sourceIds" | "keywords">): Promise<IngestedItem | undefined> {
+  async representative(groupId: number, filter: Pick<FeedFilter, "sourceIds" | "keywords" | "includeFiltered">): Promise<IngestedItem | undefined> {
     const scope = memberScope({ ...filter, symbols: [], expand: false })
     const rows = rowsOf<Record<string, any>>(await this.db.prepare(`
       SELECT ${ITEM_SELECT} FROM items m WHERE (m.seq = ? OR m.dup_of = ?) ${scope.where.length ? `AND ${scope.where.join(" AND ")}` : ""} ORDER BY m.seq LIMIT 1

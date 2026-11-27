@@ -1,6 +1,7 @@
 import type { Database, Primitive } from "db0"
-import { ITEM_SELECT, itemFromRow } from "../collector/store"
+import { ITEM_SELECT, itemFromRow, tagsFromRow } from "../collector/store"
 import type { IngestedItem } from "../collector/store"
+import type { Align, Direction, FilterReason, ItemTags } from "./types"
 
 /**
  * 富化的 SQL（#2188）：去重候选的查找、结果写回、标的与组的读取。只用 SQLite 与 D1 共有的语法；多行语句按 D1 的 100 个绑定参数上限分块，
@@ -9,7 +10,9 @@ import type { IngestedItem } from "../collector/store"
  */
 
 const D1_MAX_PARAMS = 100
-const SAVE_COLUMNS = 6
+const SAVE_COLUMNS = 7
+const ALIGN_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / 4)
+const TAG_COLUMNS = 5
 const SAVE_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / SAVE_COLUMNS)
 const SYMBOL_ROWS_PER_STATEMENT = Math.floor(D1_MAX_PARAMS / 2)
 const IN_PER_STATEMENT = D1_MAX_PARAMS - 2
@@ -35,6 +38,34 @@ export interface EnrichedRow {
   titleKey: string | null
   dupOf: number | null
   symbols: string[]
+  /** 规则层的过滤原因 */
+  filterReason: FilterReason | null
+  align: Align[]
+}
+
+/** 只重算规则层与对齐（标的变了、日历改了）：不动分组。 */
+export interface RuleRow {
+  seq: number
+  filterReason: FilterReason | null
+  align: Align[]
+}
+
+export interface TagRow {
+  seq: number
+  impact: string | null
+  direction: Direction | null
+  gist: string | null
+  themes: string[] | null
+}
+
+export interface DeepRecord {
+  seq: number
+  /** 深读结果的 JSON 文本 */
+  result: string
+  model: string
+  /** 依据的材料：page = 抓到了原文页面，title = 只有标题（及同组的其他报道标题） */
+  basis: string
+  createdAt: number
 }
 
 export interface GroupMember {
@@ -57,6 +88,8 @@ export interface GroupInfo {
   members: GroupMember[]
   /** 主条目本身（按来源收拢后，代表行可能是成员，要把主条目列进它的 members） */
   main: GroupMember
+  /** 组的标注（挂在主条目上）；没标过是 null */
+  tags: ItemTags | null
 }
 
 function rowsOf<T>(res: unknown): T[] {
@@ -115,39 +148,72 @@ export class EnrichStore {
     `).all(since, minKeyLength)).map(candidate)
   }
 
-  /** 写回一批富化结果。先标的、后 items（见文件头）。 */
+  /** 写回一批富化结果。先标的与对齐、后 items（见文件头）。 */
   async save(rows: EnrichedRow[], version: number) {
     for (const part of chunk(rows.flatMap(r => r.symbols.map(symbol => [symbol, r.seq] as const)), SYMBOL_ROWS_PER_STATEMENT)) {
       await this.db.prepare(`INSERT OR IGNORE INTO item_symbols (symbol, seq) VALUES ${placeholders(2, part.length)}`).run(...part.flat())
     }
+    await this.saveAlign(rows)
     for (const part of chunk(rows, SAVE_ROWS_PER_STATEMENT)) {
-      const params = part.flatMap(r => [r.seq, r.cleanTitle, r.origUrl, r.canonUrl, r.titleKey, r.dupOf] as Primitive[])
+      const params = part.flatMap(r => [r.seq, r.cleanTitle, r.origUrl, r.canonUrl, r.titleKey, r.dupOf, r.filterReason] as Primitive[])
       await this.db.prepare(`
-        WITH v (seq, clean_title, orig_url, canon_url, title_key, dup_of) AS (VALUES ${placeholders(SAVE_COLUMNS, part.length)})
+        WITH v (seq, clean_title, orig_url, canon_url, title_key, dup_of, filter_reason) AS (VALUES ${placeholders(SAVE_COLUMNS, part.length)})
         UPDATE items SET clean_title = v.clean_title, orig_url = v.orig_url, canon_url = v.canon_url, title_key = v.title_key,
-          dup_of = COALESCE(items.dup_of, v.dup_of), enriched = ${Math.floor(version)}
+          dup_of = COALESCE(items.dup_of, v.dup_of), filter_reason = v.filter_reason, enriched = ${Math.floor(version)}
         FROM v WHERE items.seq = v.seq
       `).run(...params)
     }
   }
 
+  /** 重写这些条目的对齐：先删后插（日历改了、标的变了，市场的个数可能变）。幂等。 */
+  async saveAlign(rows: { seq: number, align: Align[] }[]) {
+    for (const part of chunk(rows.map(r => r.seq), IN_PER_STATEMENT)) {
+      await this.db.prepare(`DELETE FROM item_align WHERE seq IN (${part.map(() => "?").join(",")})`).run(...part)
+    }
+    for (const part of chunk(rows.flatMap(r => r.align.map(a => [r.seq, a.market, a.tradeDate, a.session] as const)), ALIGN_ROWS_PER_STATEMENT)) {
+      await this.db.prepare(`INSERT OR REPLACE INTO item_align (seq, market, trade_date, session) VALUES ${placeholders(4, part.length)}`).run(...part.flat())
+    }
+  }
+
+  /** 只更新规则层结果与对齐，并把 enriched 置为 version（分组、标题、标的都不动）。 */
+  async saveRules(rows: RuleRow[], version: number) {
+    await this.saveAlign(rows)
+    for (const part of chunk(rows, Math.floor(D1_MAX_PARAMS / 2))) {
+      await this.db.prepare(`
+        WITH v (seq, filter_reason) AS (VALUES ${placeholders(2, part.length)})
+        UPDATE items SET filter_reason = v.filter_reason, enriched = MAX(items.enriched, ${Math.floor(version)})
+        FROM v WHERE items.seq = v.seq
+      `).run(...part.flatMap(r => [r.seq, r.filterReason] as Primitive[]))
+    }
+  }
+
+  /** 已富化、但富化版本低于 version 的条目（给规则层 / 对齐补算用），按 seq 升序；all 为真时不看版本。 */
+  async rulesPending(afterSeq: number, limit: number, version: number, all: boolean): Promise<IngestedItem[]> {
+    return rowsOf<Record<string, any>>(await this.db.prepare(`
+      SELECT ${ITEM_SELECT} FROM items WHERE enriched > 0 AND (? = 1 OR enriched < ?) AND seq > ? ORDER BY seq LIMIT ?
+    `).all(all ? 1 : 0, version, afterSeq, limit)).map(itemFromRow)
+  }
+
   /** 只重算清洗标题与标的（词典更新后）：不动去重键与分组。 */
-  async saveSymbolsOnly(rows: { seq: number, cleanTitle: string, origUrl: string | null, symbols: string[], titleKey?: string | null }[]) {
+  async saveSymbolsOnly(rows: { seq: number, cleanTitle: string, origUrl: string | null, symbols: string[], titleKey?: string | null, filterReason?: FilterReason | null, align?: Align[] }[]) {
     for (const part of chunk(rows.map(r => r.seq), IN_PER_STATEMENT)) {
       await this.db.prepare(`DELETE FROM item_symbols WHERE seq IN (${part.map(() => "?").join(",")})`).run(...part)
     }
     for (const part of chunk(rows.flatMap(r => r.symbols.map(symbol => [symbol, r.seq] as const)), SYMBOL_ROWS_PER_STATEMENT)) {
       await this.db.prepare(`INSERT OR IGNORE INTO item_symbols (symbol, seq) VALUES ${placeholders(2, part.length)}`).run(...part.flat())
     }
-    for (const part of chunk(rows, 32)) {
+    for (const part of chunk(rows, Math.floor(D1_MAX_PARAMS / 7))) {
       // title_key 只在给了的时候更新（标题变了要跟着变；词典更新时不动去重键）
       await this.db.prepare(`
-        WITH v (seq, clean_title, orig_url, set_key, title_key) AS (VALUES ${placeholders(5, part.length)})
+        WITH v (seq, clean_title, orig_url, set_key, title_key, set_rules, filter_reason) AS (VALUES ${placeholders(7, part.length)})
         UPDATE items SET clean_title = v.clean_title, orig_url = v.orig_url,
-          title_key = CASE WHEN v.set_key = 1 THEN v.title_key ELSE items.title_key END
+          title_key = CASE WHEN v.set_key = 1 THEN v.title_key ELSE items.title_key END,
+          filter_reason = CASE WHEN v.set_rules = 1 THEN v.filter_reason ELSE items.filter_reason END
         FROM v WHERE items.seq = v.seq
-      `).run(...part.flatMap(r => [r.seq, r.cleanTitle, r.origUrl, r.titleKey === undefined ? 0 : 1, r.titleKey ?? null] as Primitive[]))
+      `).run(...part.flatMap(r => [r.seq, r.cleanTitle, r.origUrl, r.titleKey === undefined ? 0 : 1, r.titleKey ?? null, r.filterReason === undefined ? 0 : 1, r.filterReason ?? null] as Primitive[]))
     }
+    // 标的变了，涉及的市场可能跟着变：给了对齐的一并重写
+    await this.saveAlign(rows.filter((r): r is typeof r & { align: Align[] } => r.align !== undefined))
   }
 
   /** 这些条目的标的。 */
@@ -166,10 +232,32 @@ export class EnrichStore {
     return out
   }
 
-  /** 给条目补上标的（原地）。 */
+  /** 这些条目的对齐交易日，每条按市场 cn、us、crypto 的顺序。 */
+  async alignOf(seqs: number[]): Promise<Map<number, Align[]>> {
+    const out = new Map<number, Align[]>()
+    if (!seqs.length) return out
+    for (const part of chunk([...new Set(seqs)], 5000)) {
+      for (const r of rowsOf<{ seq: number, market: Align["market"], trade_date: string, session: Align["session"] }>(await this.db.prepare(`
+        SELECT seq, market, trade_date, session FROM item_align WHERE seq IN (SELECT value FROM json_each(?))
+        ORDER BY seq, CASE market WHEN 'cn' THEN 0 WHEN 'us' THEN 1 ELSE 2 END
+      `).all(JSON.stringify(part)))) {
+        const list = out.get(r.seq)
+        const a: Align = { market: r.market, tradeDate: r.trade_date, session: r.session }
+        if (list) list.push(a)
+        else out.set(r.seq, [a])
+      }
+    }
+    return out
+  }
+
+  /** 给条目补上标的与对齐（原地）。 */
   async hydrate(items: IngestedItem[]): Promise<void> {
-    const symbols = await this.symbolsOf(items.map(i => i.seq))
-    for (const item of items) item.symbols = symbols.get(item.seq) ?? []
+    const seqs = items.map(i => i.seq)
+    const [symbols, align] = await Promise.all([this.symbolsOf(seqs), this.alignOf(seqs)])
+    for (const item of items) {
+      item.symbols = symbols.get(item.seq) ?? []
+      item.align = align.get(item.seq) ?? []
+    }
   }
 
   /**
@@ -183,13 +271,14 @@ export class EnrichStore {
     const json = JSON.stringify(ids)
     const sources = new Map<number, Set<string>>()
     for (const r of rowsOf<Record<string, any>>(await this.db.prepare(`
-      SELECT seq, source_id, item_id, url, orig_url, pub_date, first_seen_at, feed_ts FROM items WHERE seq IN (SELECT value FROM json_each(?))
+      SELECT seq, source_id, item_id, url, orig_url, pub_date, first_seen_at, feed_ts, impact, direction, gist, themes, tagged FROM items WHERE seq IN (SELECT value FROM json_each(?))
     `).all(json))) {
       sources.set(r.seq, new Set([r.source_id]))
       out.set(r.seq, {
         sourcesCount: 1,
         size: 1,
         members: [],
+        tags: tagsFromRow(r),
         main: { seq: r.seq, sourceId: r.source_id, itemId: r.item_id, url: r.url, origUrl: r.orig_url, pubDate: r.pub_date, firstSeenAt: r.first_seen_at, feedTs: r.feed_ts },
       })
     }
@@ -232,6 +321,75 @@ export class EnrichStore {
     const health = await this.db.prepare(`SELECT MAX(last_attempt_at) AS t FROM source_health`).get() as { t: number | null } | undefined
     const items = await this.db.prepare(`SELECT MAX(last_seen_at) AS t FROM items`).get() as { t: number | null } | undefined
     return Math.max(health?.t ?? 0, items?.t ?? 0)
+  }
+
+  // ---- 批量标注层
+
+  /**
+   * 待标注的组（主条目）：已富化、没被规则层过滤、还没标过、失败次数没到上限；新的先标（新闻的价值随时间衰减）。
+   * sourceIds 不为 null 时只取这些来源的、或者标题里识别出了标的的（财经之外的源里偶尔也有财经消息）。
+   */
+  async pendingTags(limit: number, maxAttempts: number, sourceIds: string[] | null): Promise<IngestedItem[]> {
+    const scope = sourceIds === null ? "" : `AND (source_id IN (SELECT value FROM json_each(?)) OR seq IN (SELECT seq FROM item_symbols))`
+    const items = rowsOf<Record<string, any>>(await this.db.prepare(`
+      SELECT ${ITEM_SELECT} FROM items
+      WHERE tagged = 0 AND enriched > 0 AND dup_of IS NULL AND filter_reason IS NULL AND tag_attempts < ? ${scope}
+      ORDER BY seq DESC LIMIT ?
+    `).all(...[maxAttempts, ...(sourceIds === null ? [] : [JSON.stringify(sourceIds)]), limit])).map(itemFromRow)
+    await this.hydrate(items)
+    return items
+  }
+
+  /** 写回一批标注结果，并把 tagged 置为 version。 */
+  async saveTags(rows: TagRow[], version: number) {
+    for (const part of chunk(rows, Math.floor(D1_MAX_PARAMS / TAG_COLUMNS))) {
+      await this.db.prepare(`
+        WITH v (seq, impact, direction, gist, themes) AS (VALUES ${placeholders(TAG_COLUMNS, part.length)})
+        UPDATE items SET impact = v.impact, direction = v.direction, gist = v.gist, themes = v.themes, tagged = ${Math.floor(version)}
+        FROM v WHERE items.seq = v.seq
+      `).run(...part.flatMap(r => [r.seq, r.impact, r.direction, r.gist, r.themes ? JSON.stringify(r.themes) : null] as Primitive[]))
+    }
+  }
+
+  /** 这些条目标注失败一次（模型没返回它、或返回的整条不可用）：计数加一，到上限就不再自动重试。 */
+  async bumpTagAttempts(seqs: number[]) {
+    for (const part of chunk(seqs, IN_PER_STATEMENT)) {
+      await this.db.prepare(`UPDATE items SET tag_attempts = tag_attempts + 1 WHERE seq IN (${part.map(() => "?").join(",")})`).run(...part)
+    }
+  }
+
+  /** 清掉标注，让它们回到待标注（改了分类表之后重标）。返回清掉的组数。 */
+  async resetTags(): Promise<number> {
+    const row = await this.db.prepare(`SELECT COUNT(*) AS n FROM items WHERE tagged > 0 OR tag_attempts > 0`).get() as { n: number }
+    await this.db.prepare(`UPDATE items SET impact = NULL, direction = NULL, gist = NULL, themes = NULL, tagged = 0, tag_attempts = 0 WHERE tagged > 0 OR tag_attempts > 0`).run()
+    return row.n
+  }
+
+  async tagCounts(maxAttempts: number): Promise<{ tagged: number, pending: number, gaveUp: number }> {
+    const row = await this.db.prepare(`
+      SELECT SUM(CASE WHEN tagged > 0 THEN 1 ELSE 0 END) AS tagged,
+        SUM(CASE WHEN tagged = 0 AND enriched > 0 AND dup_of IS NULL AND filter_reason IS NULL AND tag_attempts < ? THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN tagged = 0 AND enriched > 0 AND dup_of IS NULL AND filter_reason IS NULL AND tag_attempts >= ? THEN 1 ELSE 0 END) AS gave_up
+      FROM items
+    `).get(maxAttempts, maxAttempts) as { tagged: number | null, pending: number | null, gave_up: number | null }
+    return { tagged: row.tagged ?? 0, pending: row.pending ?? 0, gaveUp: row.gave_up ?? 0 }
+  }
+
+  // ---- 按需深读层
+
+  async item(seq: number): Promise<IngestedItem | undefined> {
+    const items = rowsOf<Record<string, any>>(await this.db.prepare(`SELECT ${ITEM_SELECT} FROM items WHERE seq = ?`).all(seq)).map(itemFromRow)
+    await this.hydrate(items)
+    return items[0]
+  }
+
+  async getDeep(seq: number): Promise<DeepRecord | undefined> {
+    const r = await this.db.prepare(`SELECT seq, result, model, basis, created_at FROM item_deep WHERE seq = ?`).get(seq) as Record<string, any> | undefined
+    return r ? { seq: r.seq, result: r.result, model: r.model, basis: r.basis, createdAt: r.created_at } : undefined
+  }
+
+  async saveDeep(rec: DeepRecord) {
+    await this.db.prepare(`INSERT OR REPLACE INTO item_deep (seq, result, model, basis, created_at) VALUES (?, ?, ?, ?, ?)`).run(rec.seq, rec.result, rec.model, rec.basis, rec.createdAt)
   }
 
   async counts(): Promise<{ total: number, pending: number }> {

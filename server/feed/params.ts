@@ -1,6 +1,8 @@
 import { Buffer } from "node:buffer"
 import type { FeedCursor } from "./store"
 import { SYMBOL_ID } from "#/enrich/symbols"
+import { DIRECTIONS, MARKETS } from "#/enrich/types"
+import type { Direction, Market } from "#/enrich/types"
 import { InputError } from "#/registry/spec"
 
 /**
@@ -37,6 +39,16 @@ export interface FeedParams {
   includeInactive: boolean
   /** 展开：同一事件的多条报道每条单独出现；默认每组只出主条目一行 */
   expand: boolean
+  /** 市场（cn / us / crypto）：只要按这个市场对齐过交易日的条目；与 tradeDate 一起用时，是「这个市场的这个交易日」 */
+  market?: Market
+  /** 交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场） */
+  tradeDate?: string
+  /** 影响类型（分类表里的名称，见 GET /api/feed/meta）；组的标注命中其中之一 */
+  impact: string[]
+  /** 方向：bull / bear / neutral；组的标注命中其中之一 */
+  direction: Direction[]
+  /** 含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列）；默认不含 */
+  includeFiltered: boolean
 }
 
 type Raw = Record<string, unknown>
@@ -72,6 +84,31 @@ export function timeParam(value: unknown, label: string): number | undefined {
   else throw new InputError(`${label} 必须是毫秒时间戳或日期字符串`)
   if (!Number.isFinite(ms) || ms < 0) throw new InputError(`${label} 不是合法的时间`)
   return Math.floor(ms)
+}
+
+/** YYYY-MM-DD，且是真实存在的日期（2026-02-30 不行）。 */
+function tradeDateParam(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined
+  const v = typeof value === "string" ? value.trim() : ""
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`)) || new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) !== v) {
+    throw new InputError("tradeDate 要写成 YYYY-MM-DD 的有效日期，如 2026-11-30")
+  }
+  return v
+}
+
+function marketParam(value: unknown): Market | undefined {
+  if (value === undefined || value === null || value === "") return undefined
+  const v = typeof value === "string" ? value.trim().toLowerCase() : ""
+  if (!(MARKETS as readonly string[]).includes(v)) throw new InputError(`market 必须是 ${MARKETS.join(" / ")} 之一`)
+  return v as Market
+}
+
+function directions(value: unknown): Direction[] {
+  const out = list(value, "direction").map(v => v.toLowerCase())
+  for (const v of out) {
+    if (!(DIRECTIONS as readonly string[]).includes(v)) throw new InputError(`direction「${v}」必须是 ${DIRECTIONS.join(" / ")}（利好 / 利空 / 中性）之一`)
+  }
+  return [...new Set(out)] as Direction[]
 }
 
 function bool(value: unknown) {
@@ -116,5 +153,10 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
     cursor: typeof raw.cursor === "string" && raw.cursor ? decodeCursor(raw.cursor) : undefined,
     includeInactive: bool(raw.includeInactive),
     expand: bool(raw.expand),
+    market: marketParam(raw.market),
+    tradeDate: tradeDateParam(raw.tradeDate),
+    impact: list(raw.impact, "impact"),
+    direction: directions(raw.direction),
+    includeFiltered: bool(raw.includeFiltered),
   }
 }

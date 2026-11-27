@@ -6,7 +6,7 @@ import { normalizeFeedParams } from "#/feed/params"
 import { openFeedStream } from "#/feed/stream"
 import type { StreamEvent } from "#/feed/stream"
 import { ObservationStore } from "#/collector/store"
-import { createEnricher } from "#/enrich/enrich"
+import { ENRICH_VERSION, createEnricher } from "#/enrich/enrich"
 import { TITLE_WINDOW_MS } from "#/enrich/dedup"
 
 const H = 3600_000
@@ -304,7 +304,7 @@ describe("回填与失败", () => {
     expect(await w.enricher.backfill()).toBe(2)
     const snapshot = async () => (await w.db.prepare(`SELECT seq, dup_of, enriched, clean_title, canon_url, title_key FROM items ORDER BY seq`).all()) as any[]
     const once = await snapshot()
-    expect(once.map(r => [r.seq, r.dup_of, r.enriched])).toEqual([[1, null, 1], [2, 1, 1]])
+    expect(once.map(r => [r.seq, r.dup_of, r.enriched])).toEqual([[1, null, ENRICH_VERSION], [2, 1, ENRICH_VERSION]])
     expect(await w.enricher.backfill()).toBe(0)
     expect(await snapshot()).toEqual(once)
   })
