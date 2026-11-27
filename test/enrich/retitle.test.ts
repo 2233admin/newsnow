@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { T0, descriptors, feedWorld, ingest, row } from "../feed/helpers"
 import { titleKey } from "#/enrich/dedup"
+import { createTagger } from "#/enrich/tagger"
 
 // 审阅 #8 第 4 项：同一条目再采到、标题变了，清洗标题、标的、去重键跟着变，主条目身份（seq、组）不变。
 function DESCS() {
@@ -49,5 +50,48 @@ describe("标题变了再采到：富化跟着更新", () => {
     expect(member.dupOf).toBe(1)
     expect(member.symbols).toEqual(["NVDA.XNAS"])
     expect((await w.service.query({ symbol: "NVDA.XNAS" })).items.map(i => i.itemId)).toEqual(["c"]) // 按组命中，默认出主条目
+  })
+})
+
+// 独立审 M4：标题变了，原来按旧标题打的标注要作废、按新标题重标。
+describe("标题变了再采到：批量标注跟着重标", () => {
+  const tagAll = (w: Awaited<ReturnType<typeof feedWorld>>, prompts: string[]) => createTagger({
+    store: w.enricher.store,
+    llm: async (req) => {
+      prompts.push(req.user)
+      const n = (req.user.match(/^\[\d+\]/gm) ?? []).length
+      return JSON.stringify(Array.from({ length: n }, (_, i) => ({ i, t: "公告", d: "0", g: `第 ${prompts.length} 次`, k: [] })))
+    },
+    sourceIds: async () => null,
+  })
+
+  it("主条目标题变了：tags 回到 null、tag_attempts 清零，下一轮按新标题重标；标题没变不动", async () => {
+    const w = await feedWorld(DESCS(), { enrich: true })
+    const prompts: string[] = []
+    const tagger = tagAll(w, prompts)
+    await ingest(w, "ths", [row("a", { title: "某公司发布三季度业绩预告，净利润同比增长超过五成", url: "https://t.example/a" })], T0)
+    await tagger.run()
+    expect((await w.service.query({})).items[0].tags).toMatchObject({ gist: "第 1 次" })
+    // 同样的标题再采到：不动
+    await ingest(w, "ths", [row("a", { title: "某公司发布三季度业绩预告，净利润同比增长超过五成", url: "https://t.example/a" })], T0 + 60_000)
+    expect((await w.service.query({})).items[0].tags).toMatchObject({ gist: "第 1 次" })
+    // 标题改了（更正）：旧标注作废
+    await ingest(w, "ths", [row("a", { title: "更正：某公司三季度业绩预告净利润同比增长约两成，此前数字有误", url: "https://t.example/a" })], T0 + 120_000)
+    expect((await w.service.query({})).items[0].tags).toBeNull()
+    await tagger.run()
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain("更正：某公司三季度业绩预告")
+    expect((await w.service.query({})).items[0].tags).toMatchObject({ gist: "第 2 次" })
+  })
+
+  it("成员改标题不动组的标注（标注是按主条目的标题打的）", async () => {
+    const w = await feedWorld(DESCS(), { enrich: true })
+    const prompts: string[] = []
+    const T = "国家数据局：积极拓展词元服务应用场景 健全词元计量计费、质量测评等标准规范"
+    await ingest(w, "cls-telegraph", [row("c", { title: T, url: "https://c.example/1" })], T0)
+    await ingest(w, "ths", [row("t", { title: T, url: "https://t.example/1" })], T0 + 1000)
+    await tagAll(w, prompts).run()
+    await ingest(w, "ths", [row("t", { title: `${T}（编辑稿）`, url: "https://t.example/1" })], T0 + 2000)
+    expect((await w.service.query({})).items[0].tags).toMatchObject({ impact: "公告" })
   })
 })

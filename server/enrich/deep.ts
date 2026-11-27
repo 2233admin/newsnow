@@ -14,6 +14,9 @@ import { extractObjects } from "./tagger"
  * - 它只有标题和摘要；这里还会尽力抓原文页面（走和用户订阅源同一套 SSRF 防护的抓取，抓不到就退回只用标题与同组其他报道的标题），
  *   并把依据记在结果里（basis = page | title），调用方能知道这份深读是读了原文、还是只扩写了标题；
  * - 并发点同一条只调一次模型（单飞）；模型出错或解析不出来不写缓存，下次还能重试。
+ * 缓存何时算命中（独立审 M4）：version 等于 DEEP_VERSION（提示词 / 字段改了就加一，老缓存作废）、标题指纹对得上（retitle 之后失效）、
+ * 并且——依据是原文（page）的永远有效；依据只是标题（title）而这条有链接、也配了抓取时，只在 TITLE_BASIS_RETRY_MS 之内有效，
+ * 过了再试一次抓原文（抓原文失败多是超时、限流之类的临时问题，不该把降级结果永久固化）。重试时模型出错就仍给旧结果。
  * 没配模型时返回 status = unavailable，不报错、不造假。
  */
 
@@ -42,6 +45,28 @@ export interface DeepResponse {
   createdAt: number | null
   /** status 不是 ok 时的原因 */
   message?: string
+}
+
+/** 深读缓存的提示词 / 字段版本：改了 buildDeepPrompt 或结果字段就加一，老缓存不再命中。 */
+export const DEEP_VERSION = 1
+/**
+ * 依据只是标题的缓存，这么久之后可以重试抓原文。待定：没有实测依据；取 15 分钟是想让「超时、限流」这类临时失败至少隔一个常见的限流窗口再试，
+ * 同时一条新闻最多每 15 分钟多花一次模型调用（抓不到原文的永久情形——付费墙、纯脚本页——每次重试仍是 title，代价就是这一次调用）。
+ */
+export const TITLE_BASIS_RETRY_MS = 15 * 60_000
+
+/** 标题指纹（cyrb53，53 位，十六进制）：只用来判断「标题变了没有」，不是安全哈希。 */
+export function titleFingerprint(title: string): string {
+  let h1 = 0xDEADBEEF
+  let h2 = 0x41C6CE57
+  for (let i = 0; i < title.length; i++) {
+    const c = title.charCodeAt(i)
+    h1 = Math.imul(h1 ^ c, 2654435761)
+    h2 = Math.imul(h2 ^ c, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16)
 }
 
 /** 喂给模型的原文最多这么多字。待定：按常见财经长稿 3000–5000 字、模型上下文足够取的。 */
@@ -106,25 +131,33 @@ export function createDeepReader(deps: DeepDeps) {
   const unavailable = (seq: number, message: string): DeepResponse => ({ seq, status: "unavailable", cached: false, deep: null, basis: null, model: null, createdAt: null, message })
 
   async function compute(seq: number): Promise<DeepResponse> {
+    const item = await store.item(seq)
+    if (!item) throw new DeepNotFound(`没有 seq = ${seq} 的新闻`)
+    const fingerprint = titleFingerprint(item.cleanTitle ?? item.title)
+    const url = item.origUrl ?? item.url
+    const canFetch = !!(url && deps.fetchPage)
+
+    // 命中缓存：版本、标题指纹都对得上；依据只是标题且还能再试（有链接、配了抓取、配了模型）的，过了重试间隔就当没命中
+    let stale: DeepResponse | undefined
     const cached = await store.getDeep(seq)
-    if (cached) {
+    if (cached && cached.version === DEEP_VERSION && cached.titleHash === fingerprint) {
       try {
         const deep = JSON.parse(cached.result) as DeepRead
-        return { seq, status: "ok", cached: true, deep, basis: cached.basis === "page" ? "page" : "title", model: cached.model, createdAt: cached.createdAt }
+        const hit: DeepResponse = { seq, status: "ok", cached: true, deep, basis: cached.basis === "page" ? "page" : "title", model: cached.model, createdAt: cached.createdAt }
+        const retriable = hit.basis === "title" && canFetch && !!deps.llm
+        if (!retriable || clock() - cached.createdAt < TITLE_BASIS_RETRY_MS) return hit
+        stale = hit
       } catch {
         // 缓存里的 JSON 坏了：当作没有，重新读
       }
     }
-    const item = await store.item(seq)
-    if (!item) throw new DeepNotFound(`没有 seq = ${seq} 的新闻`)
-    if (!deps.llm || !deps.model) return unavailable(seq, "没有配置模型：设置 ENRICH_LLM_PROVIDER、ENRICH_LLM_API_KEY、ENRICH_LLM_MODEL（或 ENRICH_DEEP_LLM_*）后可用")
+    if (!deps.llm || !deps.model) return stale ?? unavailable(seq, "没有配置模型：设置 ENRICH_LLM_PROVIDER、ENRICH_LLM_API_KEY、ENRICH_LLM_MODEL（或 ENRICH_DEEP_LLM_*）后可用")
 
     const members = await store.groups([item.dupOf ?? item.seq])
     const info = members.get(item.dupOf ?? item.seq)
     const memberTitles = await titlesOf(store, [info?.main, ...(info?.members ?? [])].flatMap(m => m && m.seq !== seq ? [m.seq] : []).slice(0, MAX_MEMBER_TITLES))
 
     let pageText: string | null = null
-    const url = item.origUrl ?? item.url
     if (url && deps.fetchPage) {
       try {
         const text = extractPageText(await deps.fetchPage(url))
@@ -141,13 +174,14 @@ export function createDeepReader(deps: DeepDeps) {
       text = await deps.llm({ system, user, maxTokens: DEEP_MAX_OUTPUT_TOKENS })
     } catch (e) {
       if (!(e instanceof LlmError)) logger.warn("enrich deep failed", e)
-      return { ...unavailable(seq, (e as Error).message), status: "error" }
+      // 重试时模型出错：旧的降级结果还能用，不拿错误换掉它
+      return stale ?? { ...unavailable(seq, (e as Error).message), status: "error" }
     }
     const deep = parseDeepResponse(text)
-    if (!deep) return { ...unavailable(seq, "模型返回的内容解析不出来（没有 summary），没有缓存，可以重试"), status: "error" }
+    if (!deep) return stale ?? { ...unavailable(seq, "模型返回的内容解析不出来（没有 summary），没有缓存，可以重试"), status: "error" }
     const basis = pageText ? "page" : "title"
     const createdAt = clock()
-    await store.saveDeep({ seq, result: JSON.stringify(deep), model: deps.model, basis, createdAt })
+    await store.saveDeep({ seq, result: JSON.stringify(deep), model: deps.model, basis, createdAt, version: DEEP_VERSION, titleHash: fingerprint })
     return { seq, status: "ok", cached: false, deep, basis, model: deps.model, createdAt }
   }
 

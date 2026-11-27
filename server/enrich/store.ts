@@ -66,6 +66,10 @@ export interface DeepRecord {
   /** 依据的材料：page = 抓到了原文页面，title = 只有标题（及同组的其他报道标题） */
   basis: string
   createdAt: number
+  /** 生成它的提示词 / 字段版本（deep.ts 的 DEEP_VERSION）；版本不同的缓存不算命中 */
+  version: number
+  /** 生成它时标题的指纹；标题变了（retitle）指纹对不上，缓存不算命中。老数据没有是 null */
+  titleHash: string | null
 }
 
 export interface GroupMember {
@@ -358,6 +362,16 @@ export class EnrichStore {
     }
   }
 
+  /** 清掉这些组（主条目 seq）的标注，回到待标注：主条目的标题变了，原来的标注是按旧标题打的。没标过也没失败过的不动。 */
+  async resetTagsOf(seqs: number[]) {
+    for (const part of chunk([...new Set(seqs)], IN_PER_STATEMENT)) {
+      await this.db.prepare(`
+        UPDATE items SET impact = NULL, direction = NULL, gist = NULL, themes = NULL, tagged = 0, tag_attempts = 0
+        WHERE seq IN (${part.map(() => "?").join(",")}) AND (tagged > 0 OR tag_attempts > 0)
+      `).run(...part)
+    }
+  }
+
   /** 清掉标注，让它们回到待标注（改了分类表之后重标）。返回清掉的组数。 */
   async resetTags(): Promise<number> {
     const row = await this.db.prepare(`SELECT COUNT(*) AS n FROM items WHERE tagged > 0 OR tag_attempts > 0`).get() as { n: number }
@@ -384,12 +398,12 @@ export class EnrichStore {
   }
 
   async getDeep(seq: number): Promise<DeepRecord | undefined> {
-    const r = await this.db.prepare(`SELECT seq, result, model, basis, created_at FROM item_deep WHERE seq = ?`).get(seq) as Record<string, any> | undefined
-    return r ? { seq: r.seq, result: r.result, model: r.model, basis: r.basis, createdAt: r.created_at } : undefined
+    const r = await this.db.prepare(`SELECT seq, result, model, basis, created_at, version, title_hash FROM item_deep WHERE seq = ?`).get(seq) as Record<string, any> | undefined
+    return r ? { seq: r.seq, result: r.result, model: r.model, basis: r.basis, createdAt: r.created_at, version: r.version ?? 0, titleHash: r.title_hash ?? null } : undefined
   }
 
   async saveDeep(rec: DeepRecord) {
-    await this.db.prepare(`INSERT OR REPLACE INTO item_deep (seq, result, model, basis, created_at) VALUES (?, ?, ?, ?, ?)`).run(rec.seq, rec.result, rec.model, rec.basis, rec.createdAt)
+    await this.db.prepare(`INSERT OR REPLACE INTO item_deep (seq, result, model, basis, created_at, version, title_hash) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(rec.seq, rec.result, rec.model, rec.basis, rec.createdAt, rec.version, rec.titleHash)
   }
 
   async counts(): Promise<{ total: number, pending: number }> {

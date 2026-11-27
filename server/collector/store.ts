@@ -353,9 +353,12 @@ export class ObservationStore {
         result TEXT NOT NULL,
         model TEXT NOT NULL,
         basis TEXT NOT NULL,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        version INTEGER NOT NULL DEFAULT 0,
+        title_hash TEXT
       )
     `).run()
+    await this.migrateDeepColumns()
     await this.db.prepare(`
       CREATE TABLE IF NOT EXISTS source_health (
         source_id TEXT PRIMARY KEY,
@@ -393,6 +396,21 @@ export class ObservationStore {
       `).run()
       await this.db.prepare(`DROP TABLE items`).run()
       await this.db.prepare(`ALTER TABLE items_v2 RENAME TO items`).run()
+    }
+  }
+
+  /** 深读缓存加的列（版本、标题指纹）：旧表补上；老行 version = 0，不等于当前版本，会被当作没缓存重读。 */
+  private async migrateDeepColumns() {
+    const have = async () => new Set(rowsOf<{ name: string }>(await this.db.prepare(`PRAGMA table_info(item_deep)`).all()).map(r => r.name))
+    let columns = await have()
+    for (const [name, ddl] of [["version", "INTEGER NOT NULL DEFAULT 0"], ["title_hash", "TEXT"]] as const) {
+      if (columns.has(name)) continue
+      try {
+        await this.db.prepare(`ALTER TABLE item_deep ADD COLUMN ${name} ${ddl}`).run()
+      } catch (e) {
+        columns = await have()
+        if (!columns.has(name)) throw e
+      }
     }
   }
 

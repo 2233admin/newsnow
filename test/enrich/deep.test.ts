@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { T0, descriptors, feedWorld, ingest, row } from "../feed/helpers"
-import { DeepNotFound, buildDeepPrompt, createDeepReader, extractPageText, parseDeepResponse } from "#/enrich/deep"
+import { DEEP_VERSION, DeepNotFound, TITLE_BASIS_RETRY_MS, buildDeepPrompt, createDeepReader, extractPageText, parseDeepResponse, titleFingerprint } from "#/enrich/deep"
 import { LlmError } from "#/enrich/llm"
 import type { LlmCall } from "#/enrich/llm"
 import { createFeedService } from "#/feed/service"
@@ -10,11 +10,11 @@ const GOOD = JSON.stringify({ summary: "国家数据局提出拓展词元服务�
 const TITLE = "国家数据局：积极拓展词元服务应用场景 健全词元计量计费、质量测评等标准规范"
 const PAGE = `<html><head><script>var x = 1</script></head><body><nav>导航 首页 财经</nav><article>${"<p>国家数据局今日发布通知，提出积极拓展词元服务的应用场景，并健全词元计量计费与质量测评等标准规范，相关细则将另行公布。</p>".repeat(4)}</article><footer>版权所有</footer></body></html>`
 
-async function setup(opts: { llm?: LlmCall | null, fetchPage?: (u: string) => Promise<string> } = {}) {
+async function setup(opts: { llm?: LlmCall | null, fetchPage?: (u: string) => Promise<string>, clock?: () => number } = {}) {
   const w = await feedWorld(descriptors(), { enrich: true })
   await ingest(w, "jin10", [row("a", { title: TITLE, url: "https://news.example.com/p/1" })], T0)
   await ingest(w, "weibo", [row("b", { title: `${TITLE}。`, url: "https://other.example.com/x" })], T0 + 1000)
-  const reader = createDeepReader({ store: w.enricher.store, llm: opts.llm === undefined ? async () => GOOD : opts.llm, model: "test-model", fetchPage: opts.fetchPage, clock: () => T0 + 5000 })
+  const reader = createDeepReader({ store: w.enricher.store, llm: opts.llm === undefined ? async () => GOOD : opts.llm, model: "test-model", fetchPage: opts.fetchPage, clock: opts.clock ?? (() => T0 + 5000) })
   return { w, reader }
 }
 
@@ -129,8 +129,110 @@ describe("按需深读：结果缓存进库，第二次直接读缓存", () => {
 
   it("缓存里的 JSON 坏了：当作没有，重新读", async () => {
     const { w, reader } = await setup()
-    await w.enricher.store.saveDeep({ seq: 1, result: "{坏了", model: "m", basis: "title", createdAt: T0 })
+    await w.enricher.store.saveDeep({ seq: 1, result: "{坏了", model: "m", basis: "title", createdAt: T0, version: DEEP_VERSION, titleHash: titleFingerprint(TITLE) })
     expect(await reader.read(1)).toMatchObject({ status: "ok", cached: false })
+  })
+})
+
+describe("独立审 M4：缓存带版本、标题指纹与重试间隔，不把降级结果永久固化", () => {
+  it("依据只是标题（抓原文失败）：重试间隔之内读缓存；过了再抓一次，抓到了就升成 page 并从此永久缓存", async () => {
+    let now = T0 + 5000
+    let pageOk = false
+    const llm = vi.fn<LlmCall>(async () => GOOD)
+    const fetchPage = vi.fn(async () => {
+      if (!pageOk) throw new Error("HTTP 429")
+      return PAGE
+    })
+    const { reader } = await setup({ llm, fetchPage, clock: () => now })
+    expect(await reader.read(1)).toMatchObject({ basis: "title", cached: false })
+    expect(fetchPage).toHaveBeenCalledTimes(1)
+    now += TITLE_BASIS_RETRY_MS - 1
+    expect(await reader.read(1)).toMatchObject({ basis: "title", cached: true })
+    expect(llm).toHaveBeenCalledTimes(1)
+    // 过了间隔，原文这次抓得到
+    pageOk = true
+    now += 2
+    const retried = await reader.read(1)
+    expect(retried).toMatchObject({ basis: "page", cached: false, status: "ok" })
+    expect(llm).toHaveBeenCalledTimes(2)
+    // 依据是原文的永远有效
+    now += 100 * TITLE_BASIS_RETRY_MS
+    expect(await reader.read(1)).toMatchObject({ basis: "page", cached: true })
+    expect(llm).toHaveBeenCalledTimes(2)
+  })
+
+  it("重试了仍抓不到：新的降级结果重新计时；重试时模型出错：仍给旧结果，不用错误换掉它", async () => {
+    let now = T0 + 5000
+    let broken = false
+    const llm = vi.fn<LlmCall>(async () => {
+      if (broken) throw new LlmError("模型接口返回 HTTP 500")
+      return GOOD
+    })
+    const { reader } = await setup({ llm, fetchPage: async () => {
+      throw new Error("HTTP 403")
+    }, clock: () => now })
+    await reader.read(1)
+    now += TITLE_BASIS_RETRY_MS
+    expect(await reader.read(1)).toMatchObject({ basis: "title", cached: false })
+    expect(llm).toHaveBeenCalledTimes(2)
+    now += TITLE_BASIS_RETRY_MS - 1
+    expect(await reader.read(1)).toMatchObject({ cached: true }) // 计时是从第二次开始的
+    now += 2
+    broken = true
+    expect(await reader.read(1)).toMatchObject({ status: "ok", cached: true, basis: "title" })
+  })
+
+  it("没有可重试的路径（没配抓取、或这条没有链接）：依据是标题的缓存就是最终的，不重复调模型", async () => {
+    let now = T0 + 5000
+    const llm = vi.fn<LlmCall>(async () => GOOD)
+    const { reader } = await setup({ llm, clock: () => now }) // 没有 fetchPage
+    await reader.read(1)
+    now += 1000 * TITLE_BASIS_RETRY_MS
+    expect(await reader.read(1)).toMatchObject({ cached: true })
+    expect(llm).toHaveBeenCalledTimes(1)
+  })
+
+  it("标题变了（retitle）：缓存按标题指纹失效，按新标题重读", async () => {
+    const prompts: string[] = []
+    const llm: LlmCall = async (req) => {
+      prompts.push(req.user)
+      return GOOD
+    }
+    const { w, reader } = await setup({ llm })
+    await reader.read(1)
+    expect(await reader.read(1)).toMatchObject({ cached: true })
+    await ingest(w, "jin10", [row("a", { title: "国家数据局：全面放开词元服务应用场景，细则下月公布", url: "https://news.example.com/p/1" })], T0 + 60_000)
+    const after = await reader.read(1)
+    expect(after).toMatchObject({ status: "ok", cached: false })
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain("全面放开词元服务应用场景")
+    expect(await reader.read(1)).toMatchObject({ cached: true })
+  })
+
+  it("版本不同（提示词 / 字段改过）或老数据没有版本与指纹：不算命中", async () => {
+    const llm = vi.fn<LlmCall>(async () => GOOD)
+    const { w, reader } = await setup({ llm })
+    const base = { seq: 1, result: GOOD, model: "old", basis: "page", createdAt: T0 }
+    await w.enricher.store.saveDeep({ ...base, version: DEEP_VERSION - 1, titleHash: titleFingerprint(TITLE) })
+    expect(await reader.read(1)).toMatchObject({ cached: false, model: "test-model" })
+    await w.enricher.store.saveDeep({ ...base, version: DEEP_VERSION, titleHash: null })
+    expect(await reader.read(1)).toMatchObject({ cached: false })
+    expect(llm).toHaveBeenCalledTimes(2)
+  })
+
+  it("老库的 item_deep（没有 version、title_hash 两列）启动时补上列，老行当作没缓存", async () => {
+    const { createDatabase } = await import("db0")
+    const sqlite = (await import("db0/connectors/better-sqlite3")).default
+    const { ObservationStore } = await import("#/collector/store")
+    const db = createDatabase(sqlite({ name: ":memory:" }))
+    await db.exec(`CREATE TABLE item_deep (seq INTEGER PRIMARY KEY, result TEXT NOT NULL, model TEXT NOT NULL, basis TEXT NOT NULL, created_at INTEGER NOT NULL)`)
+    await db.exec(`INSERT INTO item_deep VALUES (1, '{"summary":"旧"}', 'old', 'title', ${T0})`)
+    await new ObservationStore(db).init()
+    await new ObservationStore(db).init()
+    const cols = ((await db.prepare("PRAGMA table_info(item_deep)").all()) as { name: string }[]).map(c => c.name)
+    expect(cols).toEqual(expect.arrayContaining(["version", "title_hash"]))
+    const { EnrichStore } = await import("#/enrich/store")
+    expect(await new EnrichStore(db).getDeep(1)).toMatchObject({ version: 0, titleHash: null })
   })
 })
 
