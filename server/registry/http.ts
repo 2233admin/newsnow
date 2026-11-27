@@ -98,7 +98,7 @@ export async function guarded<T>(event: H3Event, fn: () => Promise<T>): Promise<
     return await fn()
   } catch (e) {
     if (e instanceof InputError) {
-      if (e.retryAfterSec !== undefined) setResponseHeader(event, "Retry-After", String(e.retryAfterSec))
+      if (e.retryAfterSec !== undefined) setResponseHeader(event, "Retry-After", e.retryAfterSec)
       throw createError({ statusCode: e.status, message: e.message })
     }
     logger.error(e)

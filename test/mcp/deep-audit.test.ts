@@ -101,7 +101,7 @@ describe("独立审 S7：深读进审计、每分钟上限回 429", () => {
     expect(await audit()).toHaveLength(2) // 撤销没有留下记录
 
     // 第 3 次未命中放行，第 4 次回 429
-    expect((await (await fetch(`${base()}/api/feed/deep?seq=3`)).json()).status).toBe("ok")
+    expect(((await (await fetch(`${base()}/api/feed/deep?seq=3`)).json()) as { status: string }).status).toBe("ok")
     const over = await fetch(`${base()}/api/feed/deep?seq=4`)
     expect(over.status).toBe(429)
     expect(Number(over.headers.get("retry-after"))).toBeGreaterThanOrEqual(1)
