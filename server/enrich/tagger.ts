@@ -167,7 +167,8 @@ function direction(v: unknown): Direction | null {
 export function cleanText(v: unknown, max: number): string | null {
   if (typeof v !== "string") return null
   const s = v
-    .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[\p{Cc}\u2028\u2029]/gu, " ")
     .replace(/(?:https?:\/\/|ftp:\/\/|www\.)\S*/gi, " ")
     .replace(/[<>`[\]{}]/g, " ")
     .replace(/\s+/g, " ")

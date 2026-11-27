@@ -11,7 +11,7 @@ import { MARKET_LABELS } from "#/enrich/align"
 import { FILTER_REASON_LABELS } from "#/enrich/filter"
 import { getImpactConfig } from "#/enrich/impact"
 import { DeepNotFound } from "#/enrich/deep"
-import type { DeepReader, DeepResponse } from "#/enrich/deep"
+import type { DeepReadOptions, DeepReader, DeepResponse } from "#/enrich/deep"
 
 /** 一组里除主条目外的成员（同一事件的其他报道）。 */
 export interface FeedMemberView {
@@ -283,14 +283,15 @@ export function createFeedService(deps: FeedServiceDeps) {
 
     /**
      * 按需深读一条（按 seq）：第一次调模型，结果缓存进库，之后直接读缓存。没配模型返回 status = unavailable（不是错误）；
-     * 模型出错 status = error（不缓存，可重试）；seq 不存在抛 404。
+     * 模型出错 status = error（不缓存结果；30 秒内同一条再请求直接返回这次的失败，不重抓不重调）；seq 不存在抛 404；
+     * 全局并发或每分钟次数到上限抛 429（InputError，带 retryAfterSec；缓存命中不受限）。opts.onCall 在真的调了模型时回调（审计用）。
      */
-    async deep(rawSeq: unknown): Promise<DeepResponse> {
+    async deep(rawSeq: unknown, opts: DeepReadOptions = {}): Promise<DeepResponse> {
       const seq = typeof rawSeq === "number" ? rawSeq : typeof rawSeq === "string" && /^\d{1,15}$/.test(rawSeq.trim()) ? Number(rawSeq.trim()) : Number.NaN
       if (!Number.isSafeInteger(seq) || seq < 1) throw new InputError("seq 必须是正整数（新闻的 seq）")
       if (!deps.deep) return { seq, status: "unavailable", cached: false, deep: null, basis: null, model: null, createdAt: null, message: "这个部署没有开启深读" }
       try {
-        return await deps.deep.read(seq)
+        return await deps.deep.read(seq, opts)
       } catch (e) {
         if (e instanceof DeepNotFound) throw new InputError(e.message, 404)
         throw e

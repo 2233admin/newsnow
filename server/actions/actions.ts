@@ -144,6 +144,23 @@ export function createActions(deps: ActionDeps) {
       return await audit.list(limit, before)
     },
 
+    /**
+     * 记一次真正发起了的深读（抓页面 + 调付费模型；缓存命中、被限流拒绝的不记）。不改任何用户源：changes 为空，不可撤销，
+     * 只用来在审计里看「谁、什么时候、读了哪条、花没花钱」（独立审 S7）。
+     */
+    async recordDeep(caller: Caller, call: { seq: number, basis: "page" | "title", outcome: "ok" | "error", model: string }): Promise<number> {
+      const rec = await audit.append({
+        at: clock(),
+        entry: caller.entry,
+        actor: cleanActor(caller.actor),
+        action: "deep.read",
+        summary: `深读 seq=${call.seq}（${call.basis === "page" ? "读了原文" : "只有标题"}，${call.outcome === "ok" ? "成功" : "失败"}，模型 ${call.model.slice(0, 64)}）`,
+        changes: [],
+        undoOf: null,
+      })
+      return rec.id
+    },
+
     // ---- 改（记审计，可撤销） ----
     addSource: (caller: Caller, body: unknown) => perform(caller, "source.add", async () => await service.create(body)),
     removeSource: (caller: Caller, slug: string) => perform(caller, "source.remove", () => service.remove(slug)),
@@ -166,6 +183,8 @@ export function createActions(deps: ActionDeps) {
         const rec = await audit.get(id)
         if (!rec) throw new InputError(`没有审计记录 #${id}`, 404)
         if (rec.undoneBy !== null) throw new InputError(`审计 #${id} 已被撤销（#${rec.undoneBy}）`, 409)
+        // 没有改任何东西的记录（deep.read）：没有可撤销的
+        if (!rec.changes.length) throw new InputError(`审计 #${id}（${rec.action}）没有改动任何用户源，没有可撤销的`, 409)
         const current = new Map((await store.list()).map(s => [s.slug, snapshot(s)]))
         for (const c of rec.changes) {
           if (!same(current.get(c.slug) ?? null, c.after)) {

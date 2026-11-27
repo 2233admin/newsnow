@@ -77,7 +77,8 @@ export interface UserSourceConfig {
 }
 
 export class InputError extends Error {
-  constructor(message: string, readonly status = 400) {
+  /** retryAfterSec：限流类（429）错误建议多久后重试，HTTP 入口放进 Retry-After 头 */
+  constructor(message: string, readonly status = 400, readonly retryAfterSec?: number) {
     super(message)
     this.name = "InputError"
   }

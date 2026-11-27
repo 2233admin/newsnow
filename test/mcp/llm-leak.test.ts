@@ -73,7 +73,10 @@ describe("独立审 M2：上游 401 回显 key 时，key 不出现在日志、�
     const { getObservationStore } = await import("#/collector/runtime")
     const { getEnrichRuntime } = await import("#/enrich/runtime")
     const store = await getObservationStore()
-    await store.recordObservations("jin10", [row("k1", { title: "贵州茅台：控股股东拟增持不低于 1 亿元，彰显长期发展信心" })], T0)
+    await store.recordObservations("jin10", [
+      row("k1", { title: "贵州茅台：控股股东拟增持不低于 1 亿元，彰显长期发展信心" }),
+      row("k2", { title: "宁德时代：海外工厂投产进度符合预期，二季度产能利用率继续提升" }),
+    ], T0)
 
     // 1) 批量标注：调用失败 → 退避，错误进日志
     const runtime = await getEnrichRuntime()
@@ -93,7 +96,8 @@ describe("独立审 M2：上游 401 回显 key 时，key 不出现在日志、�
     // 3) MCP 深读
     const client = new Client({ name: "leak-test", version: "1.0.0" })
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)))
-    const res = await client.callTool({ name: "read_item_deep", arguments: { seq: 1 } })
+    // 另一条（同一条刚失败过会走 30 秒负缓存，不再碰上游）
+    const res = await client.callTool({ name: "read_item_deep", arguments: { seq: 2 } })
     const body = (res.content as { text: string }[])[0].text
     expect(JSON.parse(body)).toMatchObject({ status: "error" })
     expect(body).not.toContain(KEY)
