@@ -184,7 +184,7 @@ function rowWhere(filter: FeedFilter, windowed: boolean, days?: { market: Market
   }
   if (filter.impact?.length || filter.direction?.length || filter.themes?.length) {
     // 标注挂在组的主条目上（即使主条目被规则层过滤、标注是按后面第一个没被过滤的成员的标题打的，结果也写在主条目上，见 EnrichStore.pendingTags），
-    // 按组判断（组 id = 主条目的 seq）。写法有两种，各有一种病态情形（200 万行级的合成库上量过，见 test/enrich/perf.test.ts）：
+    // 按组判断（组 id = 主条目的 seq）。写法有两种，各有一种病态情形（200 万行级的合成库上量过，见 test/perf/query.perf.ts）：
     // - 逐行探主键（窗口查询用）：对每个候选行查它所在组的主条目是否命中。常见的类型几百行里就凑够一页，快；罕见的类型要扫完整个信息流索引，慢。
     // - 先取出命中的主条目集合 G，再按 seq ∈ G 或 dup_of ∈ G 匹配（兜底的整查询用，写法同下面的标的，走主键与 idx_items_dup_of）：集合小（罕见）时快，集合大（常见）时光是建集合就慢。
     // 窗口里凑够一页说明命中的不稀少，用前一种；窗口里凑不够才落到整查询，命中的多半稀少，用后一种。
@@ -233,7 +233,7 @@ function rowWhere(filter: FeedFilter, windowed: boolean, days?: { market: Market
     } else {
       // 按组判断：先算出带这些标的的组 id 集合 G（组 id = 主条目的 seq），再按 seq ∈ G 或 dup_of ∈ G 匹配，两边分别走主键与 idx_items_dup_of。
       // 不写成 COALESCE(dup_of, seq) IN (…)：表达式用不上索引，罕见标的会扫全库（300k 行实测 3 ms -> 88 ms，#9 审阅）。
-      // 前提：成员的 dup_of 直接指向主条目、不成链（enrich.ts 保证，test/enrich/perf.test.ts 断言）；成链的话 dup_of ∈ G 会漏掉链尾。
+      // 前提：成员的 dup_of 直接指向主条目、不成链（enrich.ts 保证，test/enrich/dup-chain.test.ts 断言）；成链的话 dup_of ∈ G 会漏掉链尾。
       const groupsWith = `SELECT COALESCE(i.dup_of, i.seq) FROM items i WHERE i.seq IN (${own})`
       where.push(`(items.seq IN (${groupsWith}) OR items.dup_of IN (${groupsWith}))`)
       params.push(symbols, symbols)

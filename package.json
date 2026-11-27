@@ -23,6 +23,7 @@
     "prepare": "simple-git-hooks",
     "log": "wrangler pages deployment tail --project-name newsnow",
     "test": "vitest -c vitest.config.ts",
+    "test:perf": "vitest run -c vitest.perf.config.ts",
     "collector:check": "tsx ./scripts/collector-check.ts",
     "feed:check": "tsx ./scripts/feed-check.ts",
     "enrich:backfill": "tsx ./scripts/enrich-backfill.ts",

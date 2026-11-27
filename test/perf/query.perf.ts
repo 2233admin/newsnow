@@ -1,28 +1,20 @@
+/**
+ * 性能用例（独立审 S1）：合成 20 万行大库上的查询耗时上限。时间断言在满载 / 小核机器上会抖，所以不进默认的 `pnpm test`，
+ * 单独跑：`pnpm test:perf`（vitest.perf.config.ts）。机器慢可以放宽：`PERF_FACTOR=2 pnpm test:perf` 把所有上限乘 2；
+ * `PERF_REPORT=/path/to/file` 把每类查询的 p50 / p95 追加写进文件。
+ * 上限的依据与「待定」说明见各 describe 里的注释。不挡合并（CI 的 `pnpm test` 不含它）。
+ */
 import { appendFileSync } from "node:fs"
 import process from "node:process"
 import { createDatabase } from "db0"
 import sqlite from "db0/connectors/better-sqlite3"
 import { describe, expect, it } from "vitest"
-import { T0, descriptors, feedWorld, ingest, row } from "../feed/helpers"
+import { T0, descriptors } from "../feed/helpers"
 import { createFeedService } from "#/feed/service"
 import { FeedStore } from "#/feed/store"
 import { ObservationStore } from "#/collector/store"
 
-// #9 复审：标的条件写成 COALESCE(dup_of, seq) IN (…) 用不上索引，罕见标的的查询在 30 万行上从 3 ms 退到 88 ms。
-describe("成员的 dup_of 直接指向主条目、不成链（标的查询的 dup_of ∈ G 依赖它）", () => {
-  it("两组并成一组、同批重复、同源重发之后，没有指向成员的 dup_of", async () => {
-    const w = await feedWorld(descriptors(), { enrich: true })
-    const T = "国家数据局：积极拓展词元服务应用场景 健全词元计量计费、质量测评等标准规范"
-    await ingest(w, "jin10", [row("a", { title: T, url: "https://a.example/1" }), row("a2", { title: T, url: "https://a.example/2" })], T0)
-    await ingest(w, "weibo", [row("b", { title: `${T}。`, url: "https://a.example/3" })], T0 + 1000)
-    await ingest(w, "hackernews", [row("c", { title: "完全无关的另一条新闻内容，用来造第二个组的主条目", url: "https://b.example/1" })], T0 + 2000)
-    await ingest(w, "weibo", [row("d", { title: "完全无关的另一条新闻内容，用来造第二个组的主条目", url: "https://a.example/1?utm_source=x" })], T0 + 3000)
-    const chained = await w.db.prepare("SELECT COUNT(*) AS n FROM items m JOIN items p ON p.seq = m.dup_of WHERE p.dup_of IS NOT NULL").get() as { n: number }
-    expect(chained.n).toBe(0)
-    const members = await w.db.prepare("SELECT COUNT(*) AS n FROM items WHERE dup_of IS NOT NULL").get() as { n: number }
-    expect(members.n).toBeGreaterThan(0)
-  })
-})
+const FACTOR = Number(process.env.PERF_FACTOR) > 0 ? Number(process.env.PERF_FACTOR) : 1
 
 describe("合成大库上按标的查询的耗时有上限", () => {
   const ROWS = 200_000
@@ -30,7 +22,7 @@ describe("合成大库上按标的查询的耗时有上限", () => {
    * 每类查询 20 次的 p95 上限（毫秒）。依据：#9 审阅在 30 万行合成库上量的，索引写法 p95 3–12 ms，COALESCE 写法 48–115 ms；
    *  30 ms 在两者之间，留给 CI 机器 2.5 倍以上的余量。待定：数字没有按 CI 实测调过。
    */
-  const P95_MS = 30
+  const P95_MS = 30 * FACTOR
 
   it("罕见标的、不存在的标的、标的加来源，p95 不超过上限", async () => {
     const db = createDatabase(sqlite({ name: ":memory:" }))
@@ -73,7 +65,7 @@ describe("合成大库上按标的查询的耗时有上限", () => {
 describe("合成大库上按对齐 / 标注 / 过滤查询的耗时有上限", () => {
   const ROWS = 200_000
   /** 与上面标的查询同一个上限与依据（待定，没有按 CI 实测调过）。 */
-  const P95_MS = 30
+  const P95_MS = 30 * FACTOR
 
   it("默认首屏（过滤成了范围条件）、tradeDate（新旧两天）、罕见 / 常见影响类型、影响类型 + 方向、includeFiltered", async () => {
     const db = createDatabase(sqlite({ name: ":memory:" }))
@@ -126,7 +118,7 @@ describe("合成大库上按对齐 / 标注 / 过滤查询的耗时有上限", (
       }
       times.sort((a, b) => a - b)
       if (process.env.PERF_REPORT) appendFileSync(process.env.PERF_REPORT, `${label} p50 ${times[10].toFixed(1)} p95 ${times[18].toFixed(1)}\n`)
-      expect(times[18], `${label} p95 ${times[18].toFixed(1)} ms`).toBeLessThan(limitMs ?? P95_MS)
+      expect(times[18], `${label} p95 ${times[18].toFixed(1)} ms`).toBeLessThan(limitMs ? limitMs * FACTOR : P95_MS)
     }
   }, 120_000)
 })
