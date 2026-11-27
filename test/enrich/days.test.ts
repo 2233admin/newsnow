@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { descriptors, feedWorld, ingest, pageAll, row } from "../feed/helpers"
+import { descriptors, feedWorld, ingest, pageAll, promptItems, row } from "../feed/helpers"
 import type { LlmCall } from "#/enrich/llm"
 import { createTagger } from "#/enrich/tagger"
 import { MAX_DAYS_SPAN } from "#/feed/service"
@@ -94,10 +94,9 @@ describe("独立审 M6：GET /api/feed/days 与 GET /api/feed 的口径一致", 
     const rnd = mulberry32(2188)
     const sources = ["jin10", "weibo", "cls-telegraph", "hackernews"]
     const llm: LlmCall = async (req) => {
-      const lines = [...req.user.matchAll(/^\[(\d+)\] (.*)$/gm)]
-      return JSON.stringify(lines.map(([, i, text]) => {
+      return JSON.stringify(promptItems(req.user).map(({ id, title: text }) => {
         const h = [...text].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7)
-        return { i: Number(i), t: ["公告", "政策与监管", "市场情绪", "行业与题材"][h % 4], d: ["+", "-", "0"][h % 3], g: "要点", k: [h % 2 ? "白酒" : "芯片"] }
+        return { id, t: ["公告", "政策与监管", "市场情绪", "行业与题材"][h % 4], d: ["+", "-", "0"][h % 3], g: "要点", k: [h % 2 ? "白酒" : "芯片"] }
       }))
     }
     const base = bj("2026-11-23T08:00:00") // 周一
@@ -114,6 +113,10 @@ describe("独立审 M6：GET /api/feed/days 与 GET /api/feed 的口径一致", 
       }
     }
     await createTagger({ store: w.enricher.store, llm, sourceIds: async () => null, batchSize: 40, maxBatchesPerRun: 50 }).run()
+    // 标注真的写进去了（不是整批没标上、让「类型与方向分布一致」的断言空转）
+    const counts = await w.enricher.store.tagCounts(3)
+    expect(counts.tagged).toBeGreaterThan(30)
+    expect(counts.pending).toBe(0)
     return w
   }
 
