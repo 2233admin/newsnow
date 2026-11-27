@@ -1,13 +1,14 @@
 import { getObservationStore } from "#/collector/runtime"
 import { getFeed } from "#/feed/runtime"
-import { normalizeFeedParams } from "#/feed/params"
+import { assertStreamParams, normalizeFeedParams } from "#/feed/params"
 import { PING_INTERVAL_MS, maxStreams, openFeedStream } from "#/feed/stream"
 import { guarded } from "#/registry/http"
 import { InputError } from "#/registry/spec"
 
 /**
  * 实时推送（SSE）。事件与重连规则见 server/feed/stream.ts 的文件头。
- * 筛选参数同 GET /api/feed 里对实时流有意义的：source、category、q、symbol、includeInactive、expand。
+ * 筛选参数同 GET /api/feed 里对实时流有意义的：source、category、q、symbol、includeInactive、expand、includeFiltered。
+ * market、tradeDate、tradeDateFrom、tradeDateTo、impact、direction、theme 不支持，带了回 400（不静默忽略，见 server/feed/params.ts 的 STREAM_UNSUPPORTED）。
  * Last-Event-ID：请求头（EventSource 重连时自动带），或 ?lastEventId=（首次连接，用 GET /api/feed 响应里的 latestSeq）。
  * 不给就只推连上之后入库的新条目。只给本机；浏览器 EventSource 不能带 Authorization，用 USER_SOURCES_TOKEN 的调用方请用 fetch 读流。
  */
@@ -15,6 +16,7 @@ let openStreams = 0
 
 export default defineEventHandler(event => guarded(event, async () => {
   const query = getQuery(event)
+  assertStreamParams(query)
   const params = normalizeFeedParams(query)
   const rawId = getHeader(event, "last-event-id") ?? (typeof query.lastEventId === "string" ? query.lastEventId : undefined)
   const lastEventId = rawId && /^\d{1,15}$/.test(rawId.trim()) ? Number(rawId.trim()) : undefined

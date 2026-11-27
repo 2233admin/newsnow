@@ -1,5 +1,6 @@
 import type { Database } from "db0"
 import type { NewsItem } from "@shared/types"
+import type { Align, FilterReason, ItemTags } from "../enrich/types"
 
 /**
  * 观测库：每次采集都落库，不覆盖（#2184）。
@@ -15,6 +16,11 @@ import type { NewsItem } from "@shared/types"
  * - 富化（#2188，server/enrich/）：items 另有 clean_title（清洗后的标题，原始 title 不改）、orig_url（解出的原文链接）、canon_url 与 title_key（去重键）、
  *   dup_of（这条是哪个主条目的成员：主条目的 seq；自己是主条目或没有重复的是 NULL）、enriched（0 = 还没富化；富化版本号）。
  *   标的在 item_symbols（symbol, seq）。富化在写库处同步跑（见 recordObservations），失败不影响入库，条目留 enriched = 0，之后用回填命令补。
+ *
+ * - 分类标注与对齐交易日（#2188 补充）：items 另有 filter_reason（规则层的过滤原因，NULL = 没被过滤）、impact / direction / gist / themes（批量标注层的结果，
+ *   挂在组的主条目上；themes 是 JSON 数组文本）、tagged（0 = 还没标；标注版本号）、tag_attempts（标注失败的次数，到上限不再试）。
+ *   对齐在 item_align（seq, market, trade_date, session），一条新闻涉及几个市场就几行；按需深读的缓存在 item_deep（seq, result, model, basis, created_at）。
+ *   规则层与对齐是确定性的，和标的一起在写库处算（enrich.ts）；批量标注要调模型，不在写库的临界区里做，由 server/enrich/tagger.ts 异步补。
  *
  * SQL 一律参数化，只用 SQLite 与 Cloudflare D1 共有的语法（INSERT OR IGNORE、ON CONFLICT DO UPDATE）。
  * 多行 INSERT 按 D1 的 100 个绑定参数上限分块；不用 BEGIN/COMMIT，因为 D1 不支持，
@@ -82,6 +88,12 @@ export interface IngestedItem extends ItemRecord {
   enriched: number
   /** 识别出的标的（品种 id「代码.场所」）；列表读出来时由 FeedStore 补上 */
   symbols: string[]
+  /** 规则层的过滤原因；没被过滤是 null */
+  filterReason: FilterReason | null
+  /** 这条自己的标注（只有组的主条目会被标）；没标过是 null */
+  tags: ItemTags | null
+  /** 对齐的交易日（每个涉及的市场一项）；列表读出来时由 FeedStore 补上 */
+  align: Align[]
 }
 
 /** 写库处的富化钩子（server/enrich/enrich.ts 实现）：在通知监听器之前原地填好条目的富化字段。抛错只记日志，条目留作未富化。 */
@@ -193,6 +205,13 @@ function ITEMS_DDL(name: string) {
     title_key TEXT,
     dup_of INTEGER,
     enriched INTEGER NOT NULL DEFAULT 0,
+    filter_reason TEXT,
+    impact TEXT,
+    direction TEXT,
+    gist TEXT,
+    themes TEXT,
+    tagged INTEGER NOT NULL DEFAULT 0,
+    tag_attempts INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_id, item_id)
   )
 `
@@ -214,10 +233,26 @@ export function itemFromRow(r: Record<string, any>): IngestedItem {
     dupOf: r.dup_of ?? null,
     enriched: r.enriched ?? 0,
     symbols: [],
+    filterReason: r.filter_reason ?? null,
+    tags: tagsFromRow(r),
+    align: [],
   }
 }
 
-export const ITEM_SELECT = `seq, source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at, feed_ts, clean_title, orig_url, dup_of, enriched`
+/** 一行里的标注字段 → ItemTags；tagged = 0（没标过）是 null。 */
+export function tagsFromRow(r: Record<string, any>): ItemTags | null {
+  if (!(r.tagged > 0)) return null
+  let themes: string[] | null = null
+  if (typeof r.themes === "string") {
+    try {
+      const parsed = JSON.parse(r.themes)
+      if (Array.isArray(parsed)) themes = parsed.filter((x): x is string => typeof x === "string")
+    } catch {}
+  }
+  return { impact: r.impact ?? null, direction: r.direction ?? null, gist: r.gist ?? null, themes }
+}
+
+export const ITEM_SELECT = `seq, source_id, item_id, title, url, pub_date, first_seen_at, last_seen_at, feed_ts, clean_title, orig_url, dup_of, enriched, filter_reason, impact, direction, gist, themes, tagged`
 
 /** 富化加的列（#2188）：旧表用 ALTER TABLE 补，新表的 DDL 里已有。 */
 const ENRICH_COLUMNS: [name: string, ddl: string][] = [
@@ -227,6 +262,14 @@ const ENRICH_COLUMNS: [name: string, ddl: string][] = [
   ["title_key", "TEXT"],
   ["dup_of", "INTEGER"],
   ["enriched", "INTEGER NOT NULL DEFAULT 0"],
+  // 分类标注（#2188 补充）
+  ["filter_reason", "TEXT"],
+  ["impact", "TEXT"],
+  ["direction", "TEXT"],
+  ["gist", "TEXT"],
+  ["themes", "TEXT"],
+  ["tagged", "INTEGER NOT NULL DEFAULT 0"],
+  ["tag_attempts", "INTEGER NOT NULL DEFAULT 0"],
 ]
 
 export class ObservationStore {
@@ -288,6 +331,50 @@ export class ObservationStore {
       ) WITHOUT ROWID
     `).run()
     await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_item_symbols_seq ON item_symbols (seq)`).run()
+    // 分类标注与对齐（#2188 补充）：待标注的按 (tagged, seq) 取；按影响类型 / 方向筛；对齐按 (交易日, 市场) 筛、按 seq 取
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_tagged ON items (tagged, seq)`).run()
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_impact ON items (impact, direction)`).run()
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_direction ON items (direction)`).run()
+    // direction 的取值从 bull / bear 改名为 positive / negative（对新闻本身的读法，不是涨跌判断）：本地已经标过的库跟着改。幂等：改完就没有旧值可命中
+    await this.db.prepare(`UPDATE items SET direction = CASE direction WHEN 'bull' THEN 'positive' ELSE 'negative' END WHERE direction IN ('bull', 'bear')`).run()
+    await this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS item_align (
+        seq INTEGER NOT NULL,
+        market TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        session TEXT NOT NULL,
+        PRIMARY KEY (seq, market)
+      ) WITHOUT ROWID
+    `).run()
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_item_align_date ON item_align (trade_date, market)`).run()
+    // 题材（#2188 补充 S10）：按题材筛选走索引；items.themes（JSON 数组）是权威，这张表由它派生
+    await this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS item_themes (
+        theme TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        PRIMARY KEY (theme, seq)
+      ) WITHOUT ROWID
+    `).run()
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_item_themes_seq ON item_themes (seq)`).run()
+    // 这张表之前不存在：已经标过的库里 themes 有值而这里空，补一次（表里已经有数据就说明补过 / 在正常写入，不再动）。幂等
+    if (!await this.db.prepare(`SELECT 1 AS x FROM item_themes LIMIT 1`).get()) {
+      await this.db.prepare(`
+        INSERT OR IGNORE INTO item_themes (theme, seq)
+        SELECT j.value, i.seq FROM items i, json_each(i.themes) j WHERE i.tagged > 0 AND i.themes IS NOT NULL AND json_valid(i.themes) AND typeof(j.value) = 'text'
+      `).run()
+    }
+    await this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS item_deep (
+        seq INTEGER PRIMARY KEY,
+        result TEXT NOT NULL,
+        model TEXT NOT NULL,
+        basis TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        version INTEGER NOT NULL DEFAULT 0,
+        title_hash TEXT
+      )
+    `).run()
+    await this.migrateDeepColumns()
     await this.db.prepare(`
       CREATE TABLE IF NOT EXISTS source_health (
         source_id TEXT PRIMARY KEY,
@@ -325,6 +412,21 @@ export class ObservationStore {
       `).run()
       await this.db.prepare(`DROP TABLE items`).run()
       await this.db.prepare(`ALTER TABLE items_v2 RENAME TO items`).run()
+    }
+  }
+
+  /** 深读缓存加的列（版本、标题指纹）：旧表补上；老行 version = 0，不等于当前版本，会被当作没缓存重读。 */
+  private async migrateDeepColumns() {
+    const have = async () => new Set(rowsOf<{ name: string }>(await this.db.prepare(`PRAGMA table_info(item_deep)`).all()).map(r => r.name))
+    let columns = await have()
+    for (const [name, ddl] of [["version", "INTEGER NOT NULL DEFAULT 0"], ["title_hash", "TEXT"]] as const) {
+      if (columns.has(name)) continue
+      try {
+        await this.db.prepare(`ALTER TABLE item_deep ADD COLUMN ${name} ${ddl}`).run()
+      } catch (e) {
+        columns = await have()
+        if (!columns.has(name)) throw e
+      }
     }
   }
 

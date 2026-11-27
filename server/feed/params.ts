@@ -1,6 +1,9 @@
 import { Buffer } from "node:buffer"
 import type { FeedCursor } from "./store"
 import { SYMBOL_ID } from "#/enrich/symbols"
+import { marketOfSymbol } from "#/enrich/align"
+import { DIRECTIONS, MARKETS } from "#/enrich/types"
+import type { Direction, Market } from "#/enrich/types"
 import { InputError } from "#/registry/spec"
 
 /**
@@ -37,6 +40,26 @@ export interface FeedParams {
   includeInactive: boolean
   /** 展开：同一事件的多条报道每条单独出现；默认每组只出主条目一行 */
   expand: boolean
+  /**
+   * 市场（cn / us / crypto）：只要按这个市场对齐过交易日的条目；与 tradeDate / tradeDateFrom / tradeDateTo 一起用时，是「这个市场的这些交易日」。
+   * 给了 symbol 与交易日条件却没给 market 时，由标的的场所推出（600519.XSHG → cn，AAPL.XNAS → us，BTCUSDT.BINANCE → crypto），
+   * 标的各自只匹配自己市场的对齐：K 线上点（交易日，标的）不会取到「这个标的在另一个市场的交易日」凑巧相同的新闻。
+   */
+  market?: Market
+  /** 交易日 YYYY-MM-DD：条目在某个市场里对齐到这一天（给了 market 就限定在那个市场） */
+  tradeDate?: string
+  /** 交易日区间的起点（含），与 market 配合；口径同 tradeDate（按对齐的交易日，不是发布时间戳） */
+  tradeDateFrom?: string
+  /** 交易日区间的终点（含） */
+  tradeDateTo?: string
+  /** 影响类型（分类表里的名称，见 GET /api/feed/meta）；组的标注命中其中之一 */
+  impact: string[]
+  /** 方向：positive / negative / neutral（对新闻本身的读法，不是涨跌预测）；组的标注命中其中之一 */
+  direction: Direction[]
+  /** 题材（tags.themes 里的名称，整串精确匹配）；组的标注命中其中之一 */
+  theme: string[]
+  /** 含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列）；默认不含 */
+  includeFiltered: boolean
 }
 
 type Raw = Record<string, unknown>
@@ -74,6 +97,43 @@ export function timeParam(value: unknown, label: string): number | undefined {
   return Math.floor(ms)
 }
 
+/** YYYY-MM-DD，且是真实存在的日期（2026-02-30 不行）。 */
+function tradeDateParam(value: unknown, label = "tradeDate"): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined
+  const v = typeof value === "string" ? value.trim() : ""
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`)) || new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) !== v) {
+    throw new InputError(`${label} 要写成 YYYY-MM-DD 的有效日期，如 2026-11-30`)
+  }
+  return v
+}
+
+/**
+ * 交易日条件里没给 market、但给了 symbol：由标的的场所推出市场。
+ * 标的都推得出且同属一个市场 → 用它；跨了多个市场 → 拒绝（一个交易日只在一个市场里有意义，请带 market 或按市场分开查）；
+ * 有场所不认识 → 不推（保持原样：任一市场对齐到这天的都算）。
+ */
+function inferMarket(symbols: string[]): Market | undefined {
+  const markets = new Set<Market | undefined>(symbols.map(s => marketOfSymbol(s)))
+  if (!markets.size || markets.has(undefined)) return undefined
+  if (markets.size > 1) throw new InputError("symbol 跨了多个市场，而交易日是各市场自己的：请带 market，或按市场分开查")
+  return [...markets][0]
+}
+
+function marketParam(value: unknown): Market | undefined {
+  if (value === undefined || value === null || value === "") return undefined
+  const v = typeof value === "string" ? value.trim().toLowerCase() : ""
+  if (!(MARKETS as readonly string[]).includes(v)) throw new InputError(`market 必须是 ${MARKETS.join(" / ")} 之一`)
+  return v as Market
+}
+
+function directions(value: unknown): Direction[] {
+  const out = list(value, "direction").map(v => v.toLowerCase())
+  for (const v of out) {
+    if (!(DIRECTIONS as readonly string[]).includes(v)) throw new InputError(`direction「${v}」必须是 ${DIRECTIONS.join(" / ")}（正面 / 负面 / 中性，对新闻本身的读法）之一`)
+  }
+  return [...new Set(out)] as Direction[]
+}
+
 function bool(value: unknown) {
   return value === true || value === "1" || value === "true"
 }
@@ -90,6 +150,19 @@ export function decodeCursor(raw: string): FeedCursor {
   throw new InputError("cursor 无效，请用上一页响应里的 nextCursor 原样传回")
 }
 
+/**
+ * 实时流（SSE）不支持的筛选：标注（impact / direction / theme）是条目入库之后异步补的，推出时还没有，没法按它筛；
+ * 对齐（market / tradeDate / tradeDateFrom / tradeDateTo）虽然入库时就算好了，但交易日是「按这个市场收盘后顺延」的结果，流里按条推没有「这一天的完整列表」的意思，
+ * 前端要的是列表接口。不静默忽略（前端若把同一份筛选同时传给列表与实时流，会以为已过滤，实际推出的是不相关的条目），直接 400。
+ * 时间类（from / to / since / cursor / limit）对实时流本来就没有意义，仍按文档忽略。
+ */
+export const STREAM_UNSUPPORTED = ["market", "tradeDate", "tradeDateFrom", "tradeDateTo", "impact", "direction", "theme"] as const
+
+export function assertStreamParams(raw: Raw) {
+  const given = STREAM_UNSUPPORTED.filter(k => raw[k] !== undefined && raw[k] !== null && raw[k] !== "" && !(Array.isArray(raw[k]) && !(raw[k] as unknown[]).length))
+  if (given.length) throw new InputError(`实时流不支持这些筛选：${given.join("、")}（标注是入库后异步补的、交易日是对齐后的结果；要按它们筛请用 GET /api/feed）`)
+}
+
 export function normalizeFeedParams(raw: Raw): FeedParams {
   const limitRaw = raw.limit
   let limit = DEFAULT_LIMIT
@@ -104,10 +177,17 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
   const from = timeParam(raw.from, "from")
   const to = timeParam(raw.to, "to")
   if (from !== undefined && to !== undefined && from >= to) throw new InputError("from 必须早于 to")
+  const symbol = symbols(raw.symbol)
+  let market = marketParam(raw.market)
+  const tradeDate = tradeDateParam(raw.tradeDate)
+  const tradeDateFrom = tradeDateParam(raw.tradeDateFrom, "tradeDateFrom")
+  const tradeDateTo = tradeDateParam(raw.tradeDateTo, "tradeDateTo")
+  if (tradeDateFrom && tradeDateTo && tradeDateFrom > tradeDateTo) throw new InputError("tradeDateFrom 不能晚于 tradeDateTo")
+  if (!market && symbol.length && (tradeDate || tradeDateFrom || tradeDateTo)) market = inferMarket(symbol)
   return {
     source: list(raw.source, "source"),
     category: list(raw.category, "category"),
-    symbol: symbols(raw.symbol),
+    symbol,
     keywords,
     from,
     to,
@@ -116,5 +196,13 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
     cursor: typeof raw.cursor === "string" && raw.cursor ? decodeCursor(raw.cursor) : undefined,
     includeInactive: bool(raw.includeInactive),
     expand: bool(raw.expand),
+    market,
+    tradeDate,
+    tradeDateFrom,
+    tradeDateTo,
+    impact: list(raw.impact, "impact"),
+    direction: directions(raw.direction),
+    theme: list(raw.theme, "theme"),
+    includeFiltered: bool(raw.includeFiltered),
   }
 }

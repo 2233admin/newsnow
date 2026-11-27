@@ -1,9 +1,17 @@
 import { encodeCursor, normalizeFeedParams } from "./params"
 import type { FeedParams } from "./params"
-import type { FeedStore } from "./store"
+import type { DayBucket, FeedFilter, FeedStore } from "./store"
+import { InputError } from "#/registry/spec"
 import type { SourceDescriptor } from "#/registry/registry"
 import type { IngestedItem } from "#/collector/store"
 import type { GroupInfo, GroupMember } from "#/enrich/store"
+import type { Align, FilterReason, ItemTags, Market } from "#/enrich/types"
+import { DIRECTIONS, MARKETS, SESSIONS } from "#/enrich/types"
+import { MARKET_LABELS } from "#/enrich/align"
+import { FILTER_REASON_LABELS } from "#/enrich/filter"
+import { getImpactConfig } from "#/enrich/impact"
+import { DeepNotFound } from "#/enrich/deep"
+import type { DeepReadOptions, DeepReader, DeepResponse } from "#/enrich/deep"
 
 /** 一组里除主条目外的成员（同一事件的其他报道）。 */
 export interface FeedMemberView {
@@ -49,6 +57,18 @@ export interface FeedItemView {
   firstSeenAt: number
   /** 排序时间：有发布时间用发布时间，没有用 firstSeenAt（晚于 firstSeenAt 的发布时间按 firstSeenAt 算） */
   feedTs: number
+  /**
+   * 对齐交易日：这条新闻涉及的每个市场一项（标的的场所推出市场，没有标的按来源的默认市场；顺序固定 cn、us、crypto），
+   * 按这条自己的 feedTs 算。收盘后与休市日的新闻 tradeDate 是下一个交易日。还没富化的条目是空数组。
+   */
+  align: Align[]
+  /**
+   * 分类标注（影响类型、方向、一句话要点、题材），挂在组上：主条目与成员行拿到的是同一份（组的标注持有者的：组里 seq 最小、没被规则层过滤的成员，通常是主条目）。themes 是 string[] 或 null（null = 模型没给题材字段）。
+   * null = 还没标：没配模型、还在排队、被规则层过滤、或这一组标注失败到了上限。方向（positive 正面 / negative 负面 / neutral 中性）只是对这条新闻本身的读法，不是涨跌预测。
+   */
+  tags: ItemTags | null
+  /** 规则层的过滤原因（advert 广告 / stock_tout 荐股软文 / ranking_list 榜单水文 / market_roundup 行情罗列）；没被过滤是 null，默认查询里只会见到 null，includeFiltered=1 才见到非 null */
+  filterReason: FilterReason | null
 }
 
 export interface FeedResponse {
@@ -63,10 +83,27 @@ export interface FeedResponse {
   now: number
 }
 
+export interface DaysResponse {
+  /** 用的市场（给了 market 就是它，否则由 symbol 的场所推出） */
+  market: Market
+  tradeDateFrom: string
+  tradeDateTo: string
+  /** 区间内有新闻的交易日，升序；没有新闻的日子不出 */
+  days: DayBucket[]
+  now: number
+}
+
+/** 日聚合的区间上限（自然日）。待定：约三年的交易日（每年约 250 个）；按 idx_item_align_date 扫一段区间，没有按大库实测定。 */
+export const MAX_DAYS_SPAN = 800
+
 export interface FeedServiceDeps {
   store: FeedStore
   describe: () => Promise<SourceDescriptor[]>
   clock?: () => number
+  /** 按需深读（没给 = 这个部署不提供） */
+  deep?: DeepReader
+  /** 模型配了没有：批量标注、深读各一项（给 meta 用） */
+  capabilities?: { tagging: boolean, deep: boolean }
 }
 
 const asciiLower = (s: string) => s.replace(/[A-Z]/g, c => c.toLowerCase())
@@ -155,6 +192,10 @@ export function toView(item: IngestedItem, byId: Map<string, SourceDescriptor>, 
     pubDate: item.pubDate,
     firstSeenAt: item.firstSeenAt,
     feedTs: item.feedTs,
+    align: item.align,
+    // 标注挂在主条目上：组读出来的优先（成员行也能拿到），没有组信息的退回条目自己的
+    tags: group ? group.tags : item.tags,
+    filterReason: item.filterReason,
   }
 }
 
@@ -167,11 +208,36 @@ export function streamMatcher(params: FeedParams, descs: SourceDescriptor[]) {
   const allowed = scope ? new Set(scope) : undefined
   const keywords = params.keywords.map(asciiLower)
   const symbols = new Set(params.symbol)
+  // 实时流在条目入库的那一刻推：标注（异步补的）与对齐过滤（时间类参数）此时没有意义；规则层的过滤是入库时就定的，照默认隐藏
   return (item: IngestedItem) =>
-    (!allowed || allowed.has(item.sourceId))
+    (params.includeFiltered || !item.filterReason)
+    && (!allowed || allowed.has(item.sourceId))
     && keywords.every(k => asciiLower(item.title).includes(k) || asciiLower(item.cleanTitle ?? "").includes(k))
     && (!symbols.size || item.symbols.some(s => symbols.has(s)))
 }
+
+/** 查询参数 → 存储层的过滤条件（page 与 days 共用，口径不能分叉）。 */
+function filterOf(params: FeedParams, sourceIds: string[] | null): FeedFilter {
+  return {
+    sourceIds,
+    from: params.from,
+    to: params.to,
+    since: params.since,
+    keywords: params.keywords,
+    symbols: params.symbol,
+    expand: params.expand,
+    includeFiltered: params.includeFiltered,
+    market: params.market,
+    tradeDate: params.tradeDate,
+    tradeDateFrom: params.tradeDateFrom,
+    tradeDateTo: params.tradeDateTo,
+    impact: params.impact,
+    direction: params.direction,
+    themes: params.theme,
+  }
+}
+
+const dayNumber = (d: string) => Date.parse(`${d}T00:00:00Z`) / 86_400_000
 
 export function createFeedService(deps: FeedServiceDeps) {
   const { store, describe } = deps
@@ -185,11 +251,7 @@ export function createFeedService(deps: FeedServiceDeps) {
       const now = clock()
       const descs = await describe()
       const sourceIds = resolveScope(params, descs)
-      const { rows, hasMore, groups } = await store.page(
-        { sourceIds, from: params.from, to: params.to, since: params.since, keywords: params.keywords, symbols: params.symbol, expand: params.expand },
-        params.limit,
-        params.cursor,
-      )
+      const { rows, hasMore, groups } = await store.page(filterOf(params, sourceIds), params.limit, params.cursor)
       const byId = new Map(descs.map(d => [d.id, d]))
       const last = rows.at(-1)
       return {
@@ -197,6 +259,55 @@ export function createFeedService(deps: FeedServiceDeps) {
         nextCursor: hasMore && last ? encodeCursor({ feedTs: last.feedTs, sourceId: last.sourceId, itemId: last.itemId }) : null,
         latestSeq,
         now,
+      }
+    },
+
+    /**
+     * 按交易日聚合（GET /api/feed/days）：市场（或由 symbol 推出）+ 交易日区间 → 每个有新闻的交易日的条数、按影响类型与方向的分布。
+     * 其余筛选（symbol、source、category、q、impact、direction、includeFiltered、expand……）与 query 同一套，所以某一天的 count 等于
+     * query 带同样参数与 tradeDate = 这一天的总条数。limit / cursor / since 对它没有意义，不看。
+     */
+    async days(raw: Record<string, unknown>): Promise<DaysResponse> {
+      const params = normalizeFeedParams(raw)
+      const market = params.market
+      if (!market) throw new InputError("需要 market（cn / us / crypto），或给 symbol 由它的场所推出市场：交易日是各市场自己的")
+      const from = params.tradeDateFrom ?? params.tradeDate
+      const to = params.tradeDateTo ?? params.tradeDate
+      if (!from || !to) throw new InputError("需要交易日区间：tradeDateFrom 与 tradeDateTo 都要给（或只给 tradeDate 表示一天）")
+      if (dayNumber(to) - dayNumber(from) + 1 > MAX_DAYS_SPAN) throw new InputError(`交易日区间最长 ${MAX_DAYS_SPAN} 天`)
+      const descs = await describe()
+      const filter = filterOf({ ...params, since: undefined }, resolveScope(params, descs))
+      const days = await store.days({ ...filter, market, tradeDateFrom: from, tradeDateTo: to, tradeDate: undefined })
+      return { market, tradeDateFrom: from, tradeDateTo: to, days, now: clock() }
+    },
+
+    /**
+     * 按需深读一条（按 seq）：第一次调模型，结果缓存进库，之后直接读缓存。没配模型返回 status = unavailable（不是错误）；
+     * 模型出错 status = error（不缓存结果；30 秒内同一条再请求直接返回这次的失败，不重抓不重调）；seq 不存在抛 404；
+     * 全局并发或每分钟次数到上限抛 429（InputError，带 retryAfterSec；缓存命中不受限）。opts.onCall 在真的调了模型时回调（审计用）。
+     */
+    async deep(rawSeq: unknown, opts: DeepReadOptions = {}): Promise<DeepResponse> {
+      const seq = typeof rawSeq === "number" ? rawSeq : typeof rawSeq === "string" && /^\d{1,15}$/.test(rawSeq.trim()) ? Number(rawSeq.trim()) : Number.NaN
+      if (!Number.isSafeInteger(seq) || seq < 1) throw new InputError("seq 必须是正整数（新闻的 seq）")
+      if (!deps.deep) return { seq, status: "unavailable", cached: false, deep: null, basis: null, model: null, createdAt: null, message: "这个部署没有开启深读" }
+      try {
+        return await deps.deep.read(seq, opts)
+      } catch (e) {
+        if (e instanceof DeepNotFound) throw new InputError(e.message, 404)
+        throw e
+      }
+    },
+
+    /** 筛选与展示要用的枚举：影响类型分类表（按市场）、方向、时段、过滤原因，以及模型有没有配。 */
+    meta() {
+      const impact = getImpactConfig()
+      return {
+        markets: MARKETS.map(id => ({ id, label: MARKET_LABELS[id], impactTypes: impact[id].types })),
+        directions: DIRECTIONS,
+        sessions: SESSIONS,
+        filterReasons: Object.entries(FILTER_REASON_LABELS).map(([id, label]) => ({ id, label })),
+        tagging: { configured: deps.capabilities?.tagging ?? false },
+        deep: { configured: deps.capabilities?.deep ?? false },
       }
     },
   }

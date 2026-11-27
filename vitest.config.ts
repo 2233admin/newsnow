@@ -8,6 +8,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["server/**/*.test.ts", "shared/**/*.test.ts", "test/**/*.test.ts"],
+    // 性能用例（test/perf/*.perf.ts）不匹配 *.test.ts，不进默认的 pnpm test；单独跑 pnpm test:perf
   },
   resolve: {
     alias: {

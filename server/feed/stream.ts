@@ -18,6 +18,8 @@ import type { IngestedItem, ObservationStore } from "#/collector/store"
  *   前端把 groupId 那一行的来源数改成 sourcesCount 即可，主条目的位置与内容不变。
  * - reset：客户端落后太多（或 Last-Event-ID 比库里最大的 seq 还大，库被换过），不补发了：
  *   请重新 GET /api/feed 取首屏，再用响应里的 latestSeq 当 Last-Event-ID 重连。{ latestSeq }。
+ * 筛选：来源、分类、关键词、标的、includeInactive、expand、includeFiltered。market / tradeDate / tradeDateFrom / tradeDateTo / impact / direction / theme 对实时流不适用，
+ *   端点收到它们回 400（标注是之后异步补的，条目推出时还没有，item 里的 tags 此时是 null；要带标注 / 按交易日的请 GET /api/feed）。规则层过滤掉的条目默认不推，includeFiltered=1 才推。
  * - ping：保活，id 是流已处理到的 seq（带了筛选时，没匹配的条目也会推进它，重连不必重扫）。
  *
  * 断线重连：客户端带 Last-Event-ID（浏览器的 EventSource 自动带；首次连接用 ?lastEventId=）。
@@ -83,7 +85,7 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
           // 这一组到这条才第一次命中标的（之前没有任何成员带）：客户端还没有这一组的行，推订阅范围里的代表行（与 GET /api/feed 一致），
           // 不是 merge——代表行可能是更早、自己不带标的的那条
           if (item.symbols.some(s => params.symbol.includes(s)) && !await deps.feed.groupHasSymbol(groupId, params.symbol, item.seq)) {
-            const rep = await deps.feed.representative(groupId, { sourceIds: scope, keywords: params.keywords })
+            const rep = await deps.feed.representative(groupId, { sourceIds: scope, keywords: params.keywords, includeFiltered: params.includeFiltered })
             if (rep) {
               emit({ type: "item", item: toView(rep, byId, groups.get(groupId), params.expand) })
               continue
@@ -94,7 +96,7 @@ export function openFeedStream(deps: StreamDeps, params: FeedParams, lastEventId
         // 默认模式的代表行规则与 GET /api/feed 一致：订阅范围里组的第一条（seq 最小）是代表，推 item；
         // 范围（来源 / 分类 / 停用 / 关键词）里已经有更早的条目（客户端见过它）才推 merge。范围外的主条目不算，所以按来源订阅不会收到指向没见过的行的 merge。
         const earlier = item.dupOf !== null && !params.expand
-          && await deps.feed.earlierInScope(item.dupOf, item.seq, { sourceIds: scope, keywords: params.keywords })
+          && await deps.feed.earlierInScope(item.dupOf, item.seq, { sourceIds: scope, keywords: params.keywords, includeFiltered: params.includeFiltered })
         if (item.dupOf !== null && !params.expand && earlier) {
           emit({ type: "merge", seq: item.seq, groupId: item.dupOf, sourceId: item.sourceId, sourcesCount: group?.sourcesCount ?? 1 })
         } else {

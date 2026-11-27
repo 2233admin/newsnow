@@ -18,6 +18,11 @@ vi.mock("#/getters", () => ({ getters: {} }))
 const { default: mcpRoute } = await import("../../server/routes/mcp")
 const { default: listGet } = await import("#/api/collector/sources/index.get")
 const { default: auditGet } = await import("#/api/collector/audit/index.get")
+const { default: feedGet } = await import("#/api/feed/index.get")
+const { default: feedDeepGet } = await import("#/api/feed/deep.get")
+const { default: feedMetaGet } = await import("#/api/feed/meta.get")
+const { default: feedDaysGet } = await import("#/api/feed/days.get")
+const { default: feedStreamGet } = await import("#/api/feed/stream.get")
 const { getObservationStore } = await import("#/collector/runtime")
 
 let server: http.Server
@@ -29,6 +34,11 @@ beforeAll(async () => {
   router.use("/mcp", mcpRoute)
   router.get("/api/collector/sources", listGet)
   router.get("/api/collector/audit", auditGet)
+  router.get("/api/feed", feedGet)
+  router.get("/api/feed/deep", feedDeepGet)
+  router.get("/api/feed/meta", feedMetaGet)
+  router.get("/api/feed/days", feedDaysGet)
+  router.get("/api/feed/stream", feedStreamGet)
   const app = createApp()
   app.use(router)
   server = http.createServer(toNodeListener(app))
@@ -62,11 +72,14 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     expect(tools.map(t => t.name).sort()).toEqual([
       "add_source",
       "export_sources_opml",
+      "feed_days",
+      "feed_meta",
       "import_sources_opml",
       "list_audit",
       "list_sources",
       "preview_source",
       "query_feed",
+      "read_item_deep",
       "remove_source",
       "set_source_category",
       "set_source_enabled",
@@ -123,6 +136,81 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     expect(bad.isError).toBe(true)
     const paged = await call(client, "query_feed", { limit: 1 })
     expect(paged.data.nextCursor).toBeTruthy()
+    await client.close()
+  })
+
+  it("query_feed 的新筛选（#2188 补充）：market + tradeDate、includeFiltered 与 HTTP 入口一致；每条带 align / tags / filterReason", async () => {
+    const store = await getObservationStore()
+    const fri = Date.parse("2026-11-27T15:01:00+08:00")
+    await store.recordObservations("jin10", [row("al1", { title: "某公司发布三季报，净利润同比增长超过一倍，营收创历史新高" }), row("al2", { title: "加微信领取今日牛股名单，限时免费，明日必涨停，速来" })], fri)
+    const client = await connect()
+    const q = await call(client, "query_feed", { market: "cn", tradeDate: "2026-11-30" })
+    expect(q.data.items.map((i: any) => i.itemId)).toEqual(["al1"]) // 软文默认不出
+    expect(q.data.items[0]).toMatchObject({ align: [{ market: "cn", tradeDate: "2026-11-30", session: "post" }], tags: null, filterReason: null })
+    const all = await call(client, "query_feed", { market: "cn", tradeDate: "2026-11-30", includeFiltered: true })
+    expect(all.data.items.map((i: any) => [i.itemId, i.filterReason])).toEqual([["al2", "stock_tout"], ["al1", null]])
+    // HTTP 入口同一套
+    const http = await getJson("/api/feed?market=cn&tradeDate=2026-11-30")
+    expect(http.items.map((i: any) => i.itemId)).toEqual(["al1"])
+    expect((await getJson("/api/feed?impact=公告&direction=positive")).items).toEqual([])
+    // 坏参数作为工具失败返回
+    const bad = await call(client, "query_feed", { tradeDate: "2026-02-30" })
+    expect(bad.res.isError).toBe(true)
+    expect(bad.data).toContain("tradeDate")
+    const badMarket = await client.callTool({ name: "query_feed", arguments: { market: "hk" } })
+    expect(badMarket.isError).toBe(true)
+    await client.close()
+  })
+
+  it("feed_days 与 /api/feed/days：按交易日聚合，count 与 /api/feed 带 tradeDate 的总数一致；参数不对作为失败返回", async () => {
+    const client = await connect()
+    const viaMcp = await call(client, "feed_days", { market: "cn", tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    const viaHttp = await getJson("/api/feed/days?market=cn&tradeDateFrom=2026-11-27&tradeDateTo=2026-12-01")
+    expect(viaMcp.data.days).toEqual(viaHttp.days)
+    expect(viaMcp.data).toMatchObject({ market: "cn", tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    expect(viaMcp.data.days.length).toBeGreaterThan(0)
+    for (const d of viaMcp.data.days) {
+      const feed = await call(client, "query_feed", { market: "cn", tradeDate: d.tradeDate, limit: 200 })
+      expect(d.count, d.tradeDate).toBe(feed.data.items.length)
+      expect(d).toEqual(expect.objectContaining({ byImpact: expect.any(Object), byDirection: expect.any(Object), untagged: expect.any(Number) }))
+    }
+    // 区间查询接口（tradeDateFrom / To）两个入口一致
+    const range = await call(client, "query_feed", { market: "cn", tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    expect(range.data.items.map((i: any) => i.itemId)).toEqual((await getJson("/api/feed?market=cn&tradeDateFrom=2026-11-27&tradeDateTo=2026-12-01")).items.map((i: any) => i.itemId))
+    const bad = await call(client, "feed_days", { tradeDateFrom: "2026-11-27", tradeDateTo: "2026-12-01" })
+    expect(bad.res.isError).toBe(true)
+    expect(bad.data).toContain("market")
+    expect((await fetch(`${base()}/api/feed/days?market=cn`)).status).toBe(400)
+    await client.close()
+  })
+
+  it("独立审 S9：实时流收到它不支持的筛选（impact / direction / theme / market / tradeDate 区间）回 400，不静默忽略；支持的筛选照常打开", async () => {
+    for (const q of ["impact=公告", "direction=positive", "theme=白酒", "market=us", "tradeDate=2099-01-01", "tradeDateFrom=2026-11-01", "tradeDateTo=2026-11-30", "impact=公告&direction=positive&market=us&tradeDate=2099-01-01"]) {
+      const res = await fetch(`${base()}/api/feed/stream?${q}`)
+      expect(res.status, q).toBe(400)
+    }
+    const ac = new AbortController()
+    const ok = await fetch(`${base()}/api/feed/stream?source=jin10&q=黄金&includeFiltered=1`, { signal: ac.signal })
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get("content-type")).toContain("text/event-stream")
+    ac.abort()
+  })
+
+  it("feed_meta 与 /api/feed/meta 给出分类表；read_item_deep 没配模型时是 unavailable，seq 不存在是工具失败", async () => {
+    const client = await connect()
+    const meta = await call(client, "feed_meta")
+    expect(meta.data.markets.find((m: any) => m.id === "cn").impactTypes.map((t: any) => t.name)).toEqual(["公告", "政策与监管", "行业与题材", "公司经营", "外盘与宏观", "市场情绪", "其他"])
+    expect(meta.data.tagging).toEqual({ configured: false })
+    expect((await getJson("/api/feed/meta")).directions).toEqual(["positive", "negative", "neutral"])
+    const deep = await call(client, "read_item_deep", { seq: 1 })
+    expect(deep.data).toMatchObject({ seq: 1, status: "unavailable", deep: null })
+    expect(deep.data.message).toContain("ENRICH_LLM")
+    expect(await getJson("/api/feed/deep?seq=1")).toMatchObject({ status: "unavailable" })
+    const missing = await call(client, "read_item_deep", { seq: 999999 })
+    expect(missing.res.isError).toBe(true)
+    expect(missing.data).toContain("404")
+    expect((await fetch(`${base()}/api/feed/deep?seq=abc`)).status).toBe(400)
+    expect((await fetch(`${base()}/api/feed/deep?seq=999999`)).status).toBe(404)
     await client.close()
   })
 
