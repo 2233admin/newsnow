@@ -23,6 +23,7 @@ import { guarded } from "#/registry/http"
  *                  同一组的成员落在不同交易日时，区间查询里这一组只出一行（区间内最早的成员）；要按天各出一行、或要每天的条数，用 GET /api/feed/days
  *   impact         影响类型（分类表里的名称，见 GET /api/feed/meta），逗号分隔或重复；组的标注命中其中之一。标注挂在主条目上，按组判断
  *   direction      positive / negative / neutral，逗号分隔或重复；对这条新闻本身的读法（正面 / 负面 / 中性），不是涨跌预测
+ *   theme          题材（tags.themes 里的名称，整串精确匹配），逗号分隔或重复；组的标注命中其中之一
  *   includeFiltered=1  含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列），每条带 filterReason；默认不含
  *   limit          每页条数，1–200，默认 50
  *   cursor         上一页响应的 nextCursor

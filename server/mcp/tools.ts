@@ -62,7 +62,7 @@ export function createMcpServer({ feed, actions, caller }: McpDeps) {
     description: "查询已入库的新闻，最新的在前。按时间范围、来源、分类、关键词、标的筛选，游标分页；返回 items、nextCursor（null 表示到底）与 latestSeq。"
       + "每条带 cleanTitle（清洗后的标题）与 symbols（识别出的标的）；同一事件的多条报道默认聚成一行（主条目，带 sourcesCount 与 members），expand 为 true 时每条单独出现。"
       + "另带 align（对齐交易日：每个涉及的市场一项 { market, tradeDate, session }，收盘后与休市日的新闻归下一个交易日）、tags（{ impact, direction, gist, themes }，没标过是 null；方向只是对新闻本身的读法，不是涨跌预测）与 filterReason。"
-      + "可按 market + tradeDate、impact、direction 筛；规则层过滤掉的软文、榜单水文默认不出，includeFiltered 才出。影响类型有哪些见 feed_meta。",
+      + "可按 market + tradeDate（或 tradeDateFrom / tradeDateTo 区间）、impact、direction、theme 筛；规则层过滤掉的软文、榜单水文默认不出，includeFiltered 才出。影响类型有哪些见 feed_meta。",
     inputSchema: {
       from: time.optional().describe("排序时间下限（含）"),
       to: time.optional().describe("排序时间上限（不含）"),
@@ -81,6 +81,7 @@ export function createMcpServer({ feed, actions, caller }: McpDeps) {
       tradeDateTo: z.string().optional().describe("交易日区间终点（含）YYYY-MM-DD"),
       impact: list.optional().describe("影响类型（名称，如 公告、政策与监管；各市场的分类表见 feed_meta）；组的标注命中其中之一"),
       direction: z.union([z.enum(DIRECTIONS as unknown as [string, ...string[]]), z.array(z.enum(DIRECTIONS as unknown as [string, ...string[]]))]).optional().describe("方向 positive 正面 / negative 负面 / neutral 中性；对新闻本身的读法，不是涨跌预测"),
+      theme: list.optional().describe("题材（tags.themes 里的名称，整串精确匹配，如 白酒）；组的标注命中其中之一"),
       includeFiltered: z.boolean().optional().describe("含规则层过滤掉的条目（荐股软文、榜单水文、广告、行情罗列），每条带 filterReason"),
     },
     annotations: read,
@@ -99,6 +100,7 @@ export function createMcpServer({ feed, actions, caller }: McpDeps) {
       tradeDate: z.string().optional().describe("只要一天时用它，等于 tradeDateFrom = tradeDateTo"),
       impact: list.optional().describe("只数这些影响类型的组"),
       direction: z.union([z.enum(DIRECTIONS as unknown as [string, ...string[]]), z.array(z.enum(DIRECTIONS as unknown as [string, ...string[]]))]).optional().describe("方向 positive / negative / neutral"),
+      theme: list.optional().describe("题材（整串精确匹配）"),
       source: list.optional().describe("来源 id；带 * 的是前缀"),
       category: list.optional().describe("分类"),
       q: z.string().optional().describe("关键词，空白分隔，标题须包含每一个词"),

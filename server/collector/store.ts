@@ -347,6 +347,22 @@ export class ObservationStore {
       ) WITHOUT ROWID
     `).run()
     await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_item_align_date ON item_align (trade_date, market)`).run()
+    // 题材（#2188 补充 S10）：按题材筛选走索引；items.themes（JSON 数组）是权威，这张表由它派生
+    await this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS item_themes (
+        theme TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        PRIMARY KEY (theme, seq)
+      ) WITHOUT ROWID
+    `).run()
+    await this.db.prepare(`CREATE INDEX IF NOT EXISTS idx_item_themes_seq ON item_themes (seq)`).run()
+    // 这张表之前不存在：已经标过的库里 themes 有值而这里空，补一次（表里已经有数据就说明补过 / 在正常写入，不再动）。幂等
+    if (!await this.db.prepare(`SELECT 1 AS x FROM item_themes LIMIT 1`).get()) {
+      await this.db.prepare(`
+        INSERT OR IGNORE INTO item_themes (theme, seq)
+        SELECT j.value, i.seq FROM items i, json_each(i.themes) j WHERE i.tagged > 0 AND i.themes IS NOT NULL AND json_valid(i.themes) AND typeof(j.value) = 'text'
+      `).run()
+    }
     await this.db.prepare(`
       CREATE TABLE IF NOT EXISTS item_deep (
         seq INTEGER PRIMARY KEY,

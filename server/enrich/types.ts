@@ -25,8 +25,9 @@ export type Direction = "positive" | "negative" | "neutral"
 export const DIRECTIONS: readonly Direction[] = ["positive", "negative", "neutral"]
 
 /**
- * 批量标注层的结果（每组一份，挂在组的主条目上）。四个字段各自可以是 null：模型少返回了哪个就是哪个 null，不补、不造。
- * 整个对象为 null = 这一组还没标过（没配模型、还在排队、被规则层过滤）。
+ * 批量标注层的结果（每组一份，挂在组的「标注持有者」上：组里 seq 最小、没被规则层过滤的成员，通常是主条目；主条目被过滤时是后面第一个没被过滤的成员）。
+ * 四个字段各自可以是 null：模型少返回了哪个就是哪个 null，不补、不造（themes 为 null = 模型没给题材字段；给了但没有是 []）。
+ * 整个对象为 null = 这一组还没标过（没配模型、还在排队、整组都被规则层过滤、或失败到了上限）。
  */
 export interface ItemTags {
   /** 影响类型：取自 server/enrich/config/impact-types.json 里该市场的分类表的名称 */

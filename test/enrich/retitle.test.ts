@@ -94,4 +94,20 @@ describe("标题变了再采到：批量标注跟着重标", () => {
     await ingest(w, "ths", [row("t", { title: `${T}（编辑稿）`, url: "https://t.example/1" })], T0 + 2000)
     expect((await w.service.query({})).items[0].tags).toMatchObject({ impact: "公告" })
   })
+
+  it("主条目被过滤、标注来源是成员：成员改标题要重标这一组；主条目没被过滤时成员改标题不动（上一条）", async () => {
+    const w = await feedWorld(DESCS(), { enrich: true })
+    const prompts: string[] = []
+    const tagger = tagAll(w, prompts)
+    await ingest(w, "cls-telegraph", [row("spam", { title: "加微信领取今日牛股名单，限时免费，明日必涨停，机会难得", url: "https://s.example/same?utm_source=x" })], T0)
+    await ingest(w, "ths", [row("real", { title: "某公司发布重大合同公告，金额超过去年营收的一半，股价异动明显", url: "https://s.example/same" })], T0 + 1000)
+    await tagger.run()
+    expect(prompts[0]).toContain("重大合同公告")
+    expect((await w.service.query({})).items[0].tags).toMatchObject({ gist: "第 1 次" })
+    await ingest(w, "ths", [row("real", { title: "更正：某公司重大合同公告金额为去年营收的三成，此前数字有误，股价异动明显", url: "https://s.example/same" })], T0 + 60_000)
+    expect((await w.service.query({})).items[0].tags).toBeNull()
+    await tagger.run()
+    expect(prompts[1]).toContain("更正：某公司重大合同公告")
+    expect((await w.service.query({})).items[0].tags).toMatchObject({ gist: "第 2 次" })
+  })
 })

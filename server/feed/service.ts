@@ -63,7 +63,7 @@ export interface FeedItemView {
    */
   align: Align[]
   /**
-   * 分类标注（影响类型、方向、一句话要点、题材），挂在组上：主条目与成员行拿到的是同一份（主条目的）。
+   * 分类标注（影响类型、方向、一句话要点、题材），挂在组上：主条目与成员行拿到的是同一份（组的标注持有者的：组里 seq 最小、没被规则层过滤的成员，通常是主条目）。themes 是 string[] 或 null（null = 模型没给题材字段）。
    * null = 还没标：没配模型、还在排队、被规则层过滤、或这一组标注失败到了上限。方向（positive 正面 / negative 负面 / neutral 中性）只是对这条新闻本身的读法，不是涨跌预测。
    */
   tags: ItemTags | null
@@ -233,6 +233,7 @@ function filterOf(params: FeedParams, sourceIds: string[] | null): FeedFilter {
     tradeDateTo: params.tradeDateTo,
     impact: params.impact,
     direction: params.direction,
+    themes: params.theme,
   }
 }
 

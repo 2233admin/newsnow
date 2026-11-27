@@ -56,6 +56,8 @@ export interface FeedParams {
   impact: string[]
   /** 方向：positive / negative / neutral（对新闻本身的读法，不是涨跌预测）；组的标注命中其中之一 */
   direction: Direction[]
+  /** 题材（tags.themes 里的名称，整串精确匹配）；组的标注命中其中之一 */
+  theme: string[]
   /** 含规则层过滤掉的（荐股软文、榜单水文、广告、行情罗列）；默认不含 */
   includeFiltered: boolean
 }
@@ -187,6 +189,7 @@ export function normalizeFeedParams(raw: Raw): FeedParams {
     tradeDateTo,
     impact: list(raw.impact, "impact"),
     direction: directions(raw.direction),
+    theme: list(raw.theme, "theme"),
     includeFiltered: bool(raw.includeFiltered),
   }
 }

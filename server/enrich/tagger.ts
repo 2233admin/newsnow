@@ -1,12 +1,11 @@
 import process from "node:process"
 import { logger } from "../utils/logger"
-import type { IngestedItem } from "../collector/store"
 import { marketsOf } from "./align"
 import { getImpactConfig } from "./impact"
 import type { ImpactConfig } from "./impact"
 import { LlmError } from "./llm"
 import type { LlmCall } from "./llm"
-import type { EnrichStore, TagRow } from "./store"
+import type { EnrichStore, PendingTag, TagRow } from "./store"
 import { DIRECTIONS } from "./types"
 import type { Direction, Market } from "./types"
 
@@ -186,16 +185,17 @@ export function createTagger(deps: TaggerDeps) {
   let blockedUntil = 0
   let running: Promise<TagRunResult> | undefined
 
-  async function tagBatch(market: Market, items: IngestedItem[], impact: ImpactConfig): Promise<{ tagged: number, failed: number }> {
-    const { system, user } = buildTagPrompt(market, items.map(i => i.cleanTitle ?? i.title), impact)
+  async function tagBatch(market: Market, items: PendingTag[], impact: ImpactConfig): Promise<{ tagged: number, failed: number }> {
+    const { system, user } = buildTagPrompt(market, items.map(i => i.item.cleanTitle ?? i.item.title), impact)
     const text = await llm({ system, user, maxTokens: TAG_MAX_OUTPUT_TOKENS })
     const parsed = parseTagResponse(text, items.length, impact[market].types.map(t => t.name))
     const rows: TagRow[] = []
     const failed: number[] = []
-    items.forEach((item, i) => {
-      const p = parsed.get(i)
-      if (p) rows.push({ seq: item.seq, ...p })
-      else failed.push(item.seq)
+    // 结果与失败计数都记在组的主条目上（groupId）；发给模型的标题是标注来源条目的（通常就是主条目，见 EnrichStore.pendingTags）
+    items.forEach((p, i) => {
+      const t = parsed.get(i)
+      if (t) rows.push({ seq: p.groupId, ...t })
+      else failed.push(p.groupId)
     })
     if (rows.length) await store.saveTags(rows, TAG_VERSION)
     if (failed.length) await store.bumpTagAttempts(failed)
@@ -209,12 +209,12 @@ export function createTagger(deps: TaggerDeps) {
     const sourceIds = await deps.sourceIds()
     // 一次取够这一轮要用的条数，按市场分堆（各市场的分类表不同），每堆再切成批
     const pending = await store.pendingTags(batchSize * maxBatches, MAX_TAG_ATTEMPTS, sourceIds)
-    const byMarket = new Map<Market, IngestedItem[]>()
-    for (const item of pending) {
-      const market = marketsOf(item.symbols, item.sourceId)[0]
+    const byMarket = new Map<Market, PendingTag[]>()
+    for (const p of pending) {
+      const market = marketsOf(p.item.symbols, p.item.sourceId)[0]
       const list = byMarket.get(market)
-      if (list) list.push(item)
-      else byMarket.set(market, [item])
+      if (list) list.push(p)
+      else byMarket.set(market, [p])
     }
     for (const [market, items] of byMarket) {
       for (let i = 0; i < items.length; i += batchSize) {

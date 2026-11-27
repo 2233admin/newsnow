@@ -202,6 +202,113 @@ describe("影响类型与方向的筛选（标注挂在组上，按组判断）"
   })
 })
 
+describe("独立审 S10：题材筛选、标注来源、themes 的类型", () => {
+  const llm: LlmCall = async (req) => {
+    const lines = [...req.user.matchAll(/^\[(\d+)\] (.*)$/gm)]
+    return JSON.stringify(lines.map(([, i, text]) => ({
+      i: Number(i),
+      t: "公告",
+      d: "0",
+      g: "要点",
+      k: text.includes("白酒") ? ["白酒", "消费"] : text.includes("芯片") ? ["芯片"] : text.includes("无题材") ? [] : undefined,
+    })))
+  }
+  async function themed() {
+    const w = await world()
+    await ingest(w, "cls-telegraph", [
+      row("liquor", { title: "白酒板块集体走强，多家酒企披露提价计划，渠道库存持续下降", url: "https://x.example/1" }),
+      row("chip", { title: "芯片产业链订单回暖，晶圆代工厂产能利用率提升至九成以上", url: "https://x.example/2" }),
+      row("none", { title: "无题材字段的一条快讯：某公司召开股东大会审议年度利润分配方案", url: "https://x.example/3" }),
+      row("omitted", { title: "模型没给题材字段的一条快讯：某公司披露对外担保进展，担保余额同比下降", url: "https://x.example/4" }),
+    ], T0)
+    await createTagger({ store: w.enricher.store, llm, sourceIds: async () => null }).run()
+    return w
+  }
+  const ids = async (w: Awaited<ReturnType<typeof world>>, q: Record<string, unknown>) => (await w.service.query(q)).items.map(i => i.itemId).sort()
+
+  it("theme：整串精确匹配、多个取并集、与 impact / direction 是交集；tags.themes 是 string[] 或 null（模型没给字段）", async () => {
+    const w = await themed()
+    expect(await ids(w, { theme: "白酒" })).toEqual(["liquor"])
+    expect(await ids(w, { theme: "消费" })).toEqual(["liquor"])
+    expect(await ids(w, { theme: "白酒,芯片" })).toEqual(["chip", "liquor"])
+    expect(await ids(w, { theme: ["芯片", "消费"] })).toEqual(["chip", "liquor"])
+    expect(await ids(w, { theme: "白" })).toEqual([])
+    expect(await ids(w, { theme: "白酒", impact: "公告" })).toEqual(["liquor"])
+    expect(await ids(w, { theme: "白酒", impact: "政策与监管" })).toEqual([])
+    expect(await ids(w, { theme: "白酒", direction: "neutral" })).toEqual(["liquor"])
+    expect(await ids(w, { theme: "白酒", direction: "positive" })).toEqual([])
+    const by = new Map((await w.service.query({})).items.map(i => [i.itemId, i.tags]))
+    expect(by.get("liquor")!.themes).toEqual(["白酒", "消费"])
+    expect(by.get("none")!.themes).toEqual([])
+    expect(by.get("omitted")!.themes).toBeNull()
+  })
+
+  it("theme 也能在按日聚合里用；重标后旧题材不再命中；--redo 清空", async () => {
+    const w = await themed()
+    expect((await w.service.days({ market: "cn", tradeDate: "2026-11-23", theme: "芯片" })).days.reduce((a, d) => a + d.count, 0)).toBe(1)
+    await w.enricher.store.resetTags()
+    expect(await ids(w, { theme: "白酒" })).toEqual([])
+    expect(((await w.db.prepare("SELECT COUNT(*) AS n FROM item_themes").get()) as { n: number }).n).toBe(0)
+    const relabel: LlmCall = async req => JSON.stringify([...req.user.matchAll(/^\[(\d+)\]/gm)].map(([, i]) => ({ i: Number(i), t: "公告", d: "0", g: "x", k: ["新题材"] })))
+    await createTagger({ store: w.enricher.store, llm: relabel, sourceIds: async () => null }).run()
+    expect(await ids(w, { theme: "白酒" })).toEqual([])
+    expect(await ids(w, { theme: "新题材" })).toEqual(["chip", "liquor", "none", "omitted"])
+  })
+
+  it("老库里已经标过的组（themes 有值、item_themes 还不存在）：启动时补出 item_themes，题材筛选立刻可用；重复启动不重复", async () => {
+    const db = createDatabase(sqlite({ name: ":memory:" }))
+    await new ObservationStore(db).init()
+    await db.exec(`INSERT INTO items (source_id, item_id, title, first_seen_at, last_seen_at, feed_ts, clean_title, enriched, impact, direction, themes, tagged) VALUES
+      ('jin10', 'a', '旧标注甲', ${T0}, ${T0}, ${T0}, '旧标注甲', 2, '公告', 'neutral', '["白酒","消费"]', 1)`)
+    await db.exec(`DROP TABLE item_themes`)
+    await new ObservationStore(db).init()
+    await new ObservationStore(db).init()
+    const service = createFeedService({ store: new FeedStore(db), describe: async () => descriptors(), clock: () => T0 })
+    expect((await service.query({ theme: "消费" })).items.map(i => i.itemId)).toEqual(["a"])
+    expect(((await db.prepare("SELECT COUNT(*) AS n FROM item_themes").get()) as { n: number }).n).toBe(2)
+  })
+
+  it("主条目被规则层过滤、后到的成员正常：组按第一个没被过滤的成员的标题标注，结果记在主条目上，成员行 / 筛选 / 按日聚合都看得到", async () => {
+    const w = await world()
+    const prompts: string[] = []
+    const seen: LlmCall = async (req) => {
+      prompts.push(req.user)
+      return JSON.stringify([...req.user.matchAll(/^\[(\d+)\]/gm)].map(([, i]) => ({ i: Number(i), t: "公告", d: "+", g: "重大合同", k: ["合同"] })))
+    }
+    await ingest(w, "jin10", [row("a", { title: "加微信领取今日牛股名单，限时免费，明日必涨停，机会难得", url: "https://x.example/same?utm_source=x" })], bj("2026-12-01T11:00:00"))
+    await ingest(w, "weibo", [row("b", { title: "某公司发布重大合同公告，金额超过去年营收的一半，股价异动明显", url: "https://x.example/same" })], bj("2026-12-01T11:01:00"))
+    const tagger = createTagger({ store: w.enricher.store, llm: seen, sourceIds: async () => null })
+    expect((await w.enricher.store.tagCounts(MAX_TAG_ATTEMPTS)).pending).toBe(1) // 不是 0：这一组有可标的成员
+    await tagger.run()
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toContain("重大合同公告")
+    expect(prompts[0]).not.toContain("牛股")
+    const items = (await w.service.query({ includeFiltered: "1", expand: "1" })).items
+    expect(items.map(i => [i.itemId, i.tags?.impact ?? null])).toEqual([["b", "公告"], ["a", "公告"]])
+    // 默认视图：代表行是成员 b，带着组的标注
+    const def = (await w.service.query({})).items
+    expect(def.map(i => i.itemId)).toEqual(["b"])
+    expect(def[0].tags).toMatchObject({ impact: "公告", direction: "positive", gist: "重大合同", themes: ["合同"] })
+    expect((await w.service.query({ impact: "公告", theme: "合同" })).items.map(i => i.itemId)).toEqual(["b"])
+    const days = await w.service.days({ market: "cn", tradeDateFrom: "2026-12-01", tradeDateTo: "2026-12-01" })
+    expect(days.days).toEqual([{ tradeDate: "2026-12-01", count: 1, byImpact: { 公告: 1 }, byDirection: { positive: 1 }, untagged: 0 }])
+    expect(await w.enricher.store.tagCounts(MAX_TAG_ATTEMPTS)).toEqual({ tagged: 1, pending: 0, gaveUp: 0 })
+  })
+
+  it("整组都被规则层过滤：不标（也不算待标注）", async () => {
+    const w = await world()
+    const prompts: string[] = []
+    await ingest(w, "jin10", [row("a", { title: "加微信领取今日牛股名单，限时免费，明日必涨停，机会难得", url: "https://x.example/spam" })], T0)
+    const tagger = createTagger({ store: w.enricher.store, llm: async (req) => {
+      prompts.push(req.user)
+      return "[]"
+    }, sourceIds: async () => null })
+    expect(await w.enricher.store.tagCounts(MAX_TAG_ATTEMPTS)).toEqual({ tagged: 0, pending: 0, gaveUp: 0 })
+    expect((await tagger.run()).calls).toBe(0)
+    expect(prompts).toEqual([])
+  })
+})
+
 describe("迁移与回填", () => {
   it("存量库（没有新列、新表）启动时补上列与表，旧行保持原样、tags 与 align 为空；查询照常", async () => {
     const db = createDatabase(sqlite({ name: ":memory:" }))

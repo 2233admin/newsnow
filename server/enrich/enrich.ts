@@ -196,15 +196,15 @@ export function createEnricher(db: Database): Enricher {
     // 还没富化的（enriched = 0）留给回填，那时用的就是新标题
     const todo = items.filter(i => i.enriched > 0)
     if (!todo.length) return
-    // 主条目的清洗标题变了：它的标注是按旧标题打的，清掉让批量标注按新标题重标（成员的标题不进标注，不用动）
-    const retag = todo.filter(item => item.dupOf === null && cleanTitle(item.title, item.url).title !== (item.cleanTitle ?? item.title)).map(i => i.seq)
+    // 清洗标题变了：标注是按旧标题打的，清掉让批量标注按新标题重标（只有标注的来源条目的标题进标注，别的成员改了不动，见 resetTagsForRetitled）
+    const retag = todo.filter(item => cleanTitle(item.title, item.url).title !== (item.cleanTitle ?? item.title)).map(i => i.seq)
     await store.saveSymbolsOnly(todo.map((item) => {
       const cleaned = cleanTitle(item.title, item.url)
       infoCache.delete(item.seq)
       const symbols = extractSymbols(cleaned.title)
       return { seq: item.seq, cleanTitle: cleaned.title, origUrl: cleaned.origUrl, symbols, titleKey: titleKey(cleaned.title) || null, ...rulesOf(item, cleaned.title, symbols) }
     }))
-    if (retag.length) await store.resetTagsOf(retag)
+    if (retag.length) await store.resetTagsForRetitled(retag)
   }
 
   async function backfill(batch = 200, onProgress?: (done: number) => void): Promise<number> {

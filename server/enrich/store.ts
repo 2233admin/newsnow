@@ -72,6 +72,12 @@ export interface DeepRecord {
   titleHash: string | null
 }
 
+/** 待标注的一组：groupId 是主条目的 seq（结果记在它上面），item 是标题发给模型的那一条（通常就是主条目）。 */
+export interface PendingTag {
+  groupId: number
+  item: IngestedItem
+}
+
 export interface GroupMember {
   seq: number
   sourceId: string
@@ -92,7 +98,7 @@ export interface GroupInfo {
   members: GroupMember[]
   /** 主条目本身（按来源收拢后，代表行可能是成员，要把主条目列进它的 members） */
   main: GroupMember
-  /** 组的标注（挂在主条目上）；没标过是 null */
+  /** 组的标注（挂在主条目上；主条目被规则层过滤时按组里第一个没被过滤的成员的标题标，见 pendingTags）；没标过是 null */
   tags: ItemTags | null
 }
 
@@ -330,18 +336,23 @@ export class EnrichStore {
   // ---- 批量标注层
 
   /**
-   * 待标注的组（主条目）：已富化、没被规则层过滤、还没标过、失败次数没到上限；新的先标（新闻的价值随时间衰减）。
-   * sourceIds 不为 null 时只取这些来源的、或者标题里识别出了标的的（财经之外的源里偶尔也有财经消息）。
+   * 待标注的组（按主条目 seq）：主条目已富化、还没标过、失败次数没到上限；新的先标（新闻的价值随时间衰减）。
+   * 标注的来源（标题发给模型的那一条）：主条目没被规则层过滤就是它；被过滤了（比如主条目是软文）就取组里第一个没被过滤的成员，
+   * 这样一个正常的转载不会因为主条目被过滤而整组永远没有标注；整组都被过滤的不标。结果与失败计数都记在主条目上（groupId），
+   * 所以读取与筛选照旧按主条目判断。sourceIds 不为 null 时只看来源在其中、或标题里识别出了标的的来源条目（财经之外的源里偶尔也有财经消息）。
    */
-  async pendingTags(limit: number, maxAttempts: number, sourceIds: string[] | null): Promise<IngestedItem[]> {
-    const scope = sourceIds === null ? "" : `AND (source_id IN (SELECT value FROM json_each(?)) OR seq IN (SELECT seq FROM item_symbols))`
-    const items = rowsOf<Record<string, any>>(await this.db.prepare(`
-      SELECT ${ITEM_SELECT} FROM items
-      WHERE tagged = 0 AND enriched > 0 AND dup_of IS NULL AND filter_reason IS NULL AND tag_attempts < ? ${scope}
-      ORDER BY seq DESC LIMIT ?
-    `).all(...[maxAttempts, ...(sourceIds === null ? [] : [JSON.stringify(sourceIds)]), limit])).map(itemFromRow)
+  async pendingTags(limit: number, maxAttempts: number, sourceIds: string[] | null): Promise<PendingTag[]> {
+    const scope = sourceIds === null ? "" : `AND (s.source_id IN (SELECT value FROM json_each(?)) OR s.seq IN (SELECT seq FROM item_symbols))`
+    const cols = ITEM_SELECT.split(",").map(c => `s.${c.trim()}`).join(", ")
+    const rows = rowsOf<Record<string, any>>(await this.db.prepare(`
+      SELECT ${cols}, m.seq AS group_id FROM items m
+      JOIN items s ON s.seq = CASE WHEN m.filter_reason IS NULL THEN m.seq ELSE (SELECT MIN(x.seq) FROM items x WHERE x.dup_of = m.seq AND x.filter_reason IS NULL) END
+      WHERE m.tagged = 0 AND m.dup_of IS NULL AND m.enriched > 0 AND m.tag_attempts < ? AND s.enriched > 0 ${scope}
+      ORDER BY m.seq DESC LIMIT ?
+    `).all(...[maxAttempts, ...(sourceIds === null ? [] : [JSON.stringify(sourceIds)]), limit]))
+    const items = rows.map(itemFromRow)
     await this.hydrate(items)
-    return items
+    return items.map((item, i) => ({ groupId: rows[i].group_id as number, item }))
   }
 
   /** 写回一批标注结果，并把 tagged 置为 version。 */
@@ -353,6 +364,17 @@ export class EnrichStore {
         FROM v WHERE items.seq = v.seq
       `).run(...part.flatMap(r => [r.seq, r.impact, r.direction, r.gist, r.themes ? JSON.stringify(r.themes) : null] as Primitive[]))
     }
+    // 题材另存一份 item_themes（theme, seq），给按题材筛选走索引；items.themes 是权威，这张表由它派生（init 时也会补）
+    await this.clearThemes(rows.map(r => r.seq))
+    for (const part of chunk(rows.flatMap(r => [...new Set(r.themes ?? [])].map(theme => [theme, r.seq] as const)), SYMBOL_ROWS_PER_STATEMENT)) {
+      await this.db.prepare(`INSERT OR IGNORE INTO item_themes (theme, seq) VALUES ${placeholders(2, part.length)}`).run(...part.flat())
+    }
+  }
+
+  private async clearThemes(seqs: number[]) {
+    for (const part of chunk([...new Set(seqs)], IN_PER_STATEMENT)) {
+      await this.db.prepare(`DELETE FROM item_themes WHERE seq IN (${part.map(() => "?").join(",")})`).run(...part)
+    }
   }
 
   /** 这些条目标注失败一次（模型没返回它、或返回的整条不可用）：计数加一，到上限就不再自动重试。 */
@@ -362,28 +384,41 @@ export class EnrichStore {
     }
   }
 
-  /** 清掉这些组（主条目 seq）的标注，回到待标注：主条目的标题变了，原来的标注是按旧标题打的。没标过也没失败过的不动。 */
-  async resetTagsOf(seqs: number[]) {
+  /**
+   * 这些条目的标题变了：它们若是所在组的标注来源（自己是主条目，或主条目被规则层过滤、标注是按成员的标题打的），清掉那一组（主条目）的标注与失败计数，
+   * 回到待标注，按新标题重标。没标过也没失败过的不动；不是标注来源的成员改标题不影响标注。
+   */
+  async resetTagsForRetitled(seqs: number[]) {
     for (const part of chunk([...new Set(seqs)], IN_PER_STATEMENT)) {
+      const ids = part.map(() => "?").join(",")
+      await this.db.prepare(`DELETE FROM item_themes WHERE seq IN (${this.retitledGroups(ids)})`).run(...part)
       await this.db.prepare(`
         UPDATE items SET impact = NULL, direction = NULL, gist = NULL, themes = NULL, tagged = 0, tag_attempts = 0
-        WHERE seq IN (${part.map(() => "?").join(",")}) AND (tagged > 0 OR tag_attempts > 0)
+        WHERE (tagged > 0 OR tag_attempts > 0) AND seq IN (${this.retitledGroups(ids)})
       `).run(...part)
     }
+  }
+
+  private retitledGroups(ids: string) {
+    return `SELECT COALESCE(x.dup_of, x.seq) FROM items x WHERE x.seq IN (${ids})
+      AND (x.dup_of IS NULL OR EXISTS (SELECT 1 FROM items g WHERE g.seq = x.dup_of AND g.filter_reason IS NOT NULL))`
   }
 
   /** 清掉标注，让它们回到待标注（改了分类表之后重标）。返回清掉的组数。 */
   async resetTags(): Promise<number> {
     const row = await this.db.prepare(`SELECT COUNT(*) AS n FROM items WHERE tagged > 0 OR tag_attempts > 0`).get() as { n: number }
     await this.db.prepare(`UPDATE items SET impact = NULL, direction = NULL, gist = NULL, themes = NULL, tagged = 0, tag_attempts = 0 WHERE tagged > 0 OR tag_attempts > 0`).run()
+    await this.db.prepare(`DELETE FROM item_themes`).run()
     return row.n
   }
 
   async tagCounts(maxAttempts: number): Promise<{ tagged: number, pending: number, gaveUp: number }> {
+    // 待标注 / 放弃：主条目没标过、已富化，且有可当标注来源的条目（主条目自己没被过滤，或组里有没被过滤的成员）
+    const eligible = `tagged = 0 AND dup_of IS NULL AND enriched > 0 AND (filter_reason IS NULL OR EXISTS (SELECT 1 FROM items x WHERE x.dup_of = items.seq AND x.filter_reason IS NULL))`
     const row = await this.db.prepare(`
       SELECT SUM(CASE WHEN tagged > 0 THEN 1 ELSE 0 END) AS tagged,
-        SUM(CASE WHEN tagged = 0 AND enriched > 0 AND dup_of IS NULL AND filter_reason IS NULL AND tag_attempts < ? THEN 1 ELSE 0 END) AS pending,
-        SUM(CASE WHEN tagged = 0 AND enriched > 0 AND dup_of IS NULL AND filter_reason IS NULL AND tag_attempts >= ? THEN 1 ELSE 0 END) AS gave_up
+        SUM(CASE WHEN ${eligible} AND tag_attempts < ? THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN ${eligible} AND tag_attempts >= ? THEN 1 ELSE 0 END) AS gave_up
       FROM items
     `).get(maxAttempts, maxAttempts) as { tagged: number | null, pending: number | null, gave_up: number | null }
     return { tagged: row.tagged ?? 0, pending: row.pending ?? 0, gaveUp: row.gave_up ?? 0 }

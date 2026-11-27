@@ -53,6 +53,8 @@ export interface FeedFilter {
   impact?: string[]
   /** 组的方向命中其中之一 */
   direction?: Direction[]
+  /** 组的题材（tags.themes）命中其中之一，整串精确匹配 */
+  themes?: string[]
 }
 
 export interface FeedPage {
@@ -180,8 +182,9 @@ function rowWhere(filter: FeedFilter, windowed: boolean, days?: { market: Market
     where.push(align.sql)
     params.push(...align.params)
   }
-  if (filter.impact?.length || filter.direction?.length) {
-    // 标注挂在组的主条目上，按组判断（组 id = 主条目的 seq）。写法有两种，各有一种病态情形（200 万行级的合成库上量过，见 test/enrich/perf.test.ts）：
+  if (filter.impact?.length || filter.direction?.length || filter.themes?.length) {
+    // 标注挂在组的主条目上（即使主条目被规则层过滤、标注是按后面第一个没被过滤的成员的标题打的，结果也写在主条目上，见 EnrichStore.pendingTags），
+    // 按组判断（组 id = 主条目的 seq）。写法有两种，各有一种病态情形（200 万行级的合成库上量过，见 test/enrich/perf.test.ts）：
     // - 逐行探主键（窗口查询用）：对每个候选行查它所在组的主条目是否命中。常见的类型几百行里就凑够一页，快；罕见的类型要扫完整个信息流索引，慢。
     // - 先取出命中的主条目集合 G，再按 seq ∈ G 或 dup_of ∈ G 匹配（兜底的整查询用，写法同下面的标的，走主键与 idx_items_dup_of）：集合小（罕见）时快，集合大（常见）时光是建集合就慢。
     // 窗口里凑够一页说明命中的不稀少，用前一种；窗口里凑不够才落到整查询，命中的多半稀少，用后一种。
@@ -194,6 +197,11 @@ function rowWhere(filter: FeedFilter, windowed: boolean, days?: { market: Market
     if (filter.direction?.length) {
       cond.push(`t.direction IN (SELECT value FROM json_each(?))`)
       own.push(JSON.stringify(filter.direction))
+    }
+    if (filter.themes?.length) {
+      // item_themes 只有标过的主条目才有行（theme, seq），走主键
+      cond.push(`t.seq IN (SELECT th.seq FROM item_themes th WHERE th.theme IN (SELECT value FROM json_each(?)))`)
+      own.push(JSON.stringify(filter.themes))
     }
     if (windowed) {
       where.push(`EXISTS (SELECT 1 FROM items t WHERE t.seq = COALESCE(items.dup_of, items.seq) AND ${cond.join(" AND ")})`)
