@@ -16,7 +16,7 @@ import type { Align, Market, Session } from "./types"
  * - 非交易日（周末、休市日）：session = closed，tradeDate = 下一个交易日。
  * - crypto：24/7，tradeDate = 配置时区（默认 UTC）的自然日，session 一律 open。
  * - 美股提前收盘日（calendar.json 的 earlyClose）收盘时间取表里的值，之后算 post。
- * 时段边界与休市日的出处写在 config/calendar.json 里。calendar.json 没列出的年份只按周末算，日志警告一次。
+ * 时段边界与休市日的出处写在 config/calendar.json 里。calendar.json 的 years 没列出的年份只按周末算（再加上该年份里已经列出的休市日），日志警告一次；新闻自己所在的年份与「顺延」走过的年份都核对。
  */
 
 export const MARKET_LABELS: Record<Market, string> = { cn: "A 股", us: "美股", crypto: "加密币" }
@@ -191,6 +191,8 @@ export function nextTradingDay(date: string, market: Market, cal: Calendar = get
   // 最长的连休是春节 + 周末 9–11 天；留足余量，万一配置把整年都标成休市也不死循环
   for (let i = 0; i < 60; i++) {
     d = addDays(d, 1)
+    // 顺延可能跨进没有休市日表的年份（12-31 收盘后 → 次年 1 月）：走到的每一天都要核对它所在的年份有没有覆盖，不能只核对新闻自己的那一天
+    warnUncovered(market, d, cal.markets[market])
     if (isTradingDay(d, market, cal)) return d
   }
   return d

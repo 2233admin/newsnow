@@ -173,6 +173,49 @@ describe("交易日历", () => {
     }
   })
 
+  it("m1 跨年：2026-12-31 收盘后（A 股 15:01、美股 17:00 ET）顺延到 2027-01-04，元旦 2027-01-01 不是交易日", () => {
+    expect(alignAt(bj("2026-12-31T15:01:00"), "cn")).toEqual({ market: "cn", tradeDate: "2027-01-04", session: "post" })
+    expect(alignAt(ny("2026-12-31T17:00:00", "-05:00"), "us")).toEqual({ market: "us", tradeDate: "2027-01-04", session: "post" })
+    // 元旦当天本身：休市，session = closed，不是 open
+    expect(alignAt(bj("2027-01-01T10:00:00"), "cn")).toEqual({ market: "cn", tradeDate: "2027-01-04", session: "closed" })
+    expect(alignAt(ny("2027-01-01T10:00:00", "-05:00"), "us")).toEqual({ market: "us", tradeDate: "2027-01-04", session: "closed" })
+    expect(nextTradingDay("2026-12-31", "cn")).toBe("2027-01-04")
+    expect(nextTradingDay("2026-12-31", "us")).toBe("2027-01-04")
+  })
+
+  it("m1 美股 2027、2028 的休市日（NYSE 页 2026-11-27 读取）：补休、提前收盘", () => {
+    expect(isTradingDay("2027-06-18", "us")).toBe(false) // 6-19 周六，周五补休
+    expect(isTradingDay("2027-07-05", "us")).toBe(false) // 7-4 周日，周一补休
+    expect(isTradingDay("2027-12-24", "us")).toBe(false) // 12-25 周六，周五补休
+    expect(isTradingDay("2027-12-31", "us")).toBe(true)
+    expect(isTradingDay("2028-01-03", "us")).toBe(true) // 2028-01-01 周六不补休
+    expect(isTradingDay("2028-07-04", "us")).toBe(false)
+    expect(alignAt(ny("2027-11-26T13:00:00", "-05:00"), "us")).toMatchObject({ session: "post", tradeDate: "2027-11-29" })
+    expect(alignAt(ny("2027-11-26T12:59:59", "-05:00"), "us")).toMatchObject({ session: "open" })
+    // 2027 年的美股休市日表是完整的：不告警
+    resetAlignConfig()
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {})
+    try {
+      alignAt(ny("2027-12-30T17:00:00", "-05:00"), "us")
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it("m1 顺延落进没覆盖的年份也告警（新闻自己的年份是覆盖的）：A 股 2026-12-31 收盘后 → 2027 年", () => {
+    resetAlignConfig()
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {})
+    try {
+      alignAt(bj("2026-12-31T15:01:00"), "cn")
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0][0])).toContain("2027")
+      expect(String(warn.mock.calls[0][0])).toContain("cn")
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it("配置校验：坏时区、时段重叠、休市区间倒置、场所重复都会报错", () => {
     const bad = (mutate: (raw: any) => void) => {
       const raw = JSON.parse(JSON.stringify(calendarData))
