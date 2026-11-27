@@ -72,9 +72,31 @@ describe("规则层：正常新闻不误杀", () => {
     "SEC approves spot ether ETF options trading",
     "比特币突破 10 万美元，24 小时爆仓 5 亿美元",
     "公司股价翻倍后遭监管问询，要求说明炒作原因",
+    // 独立审 S2：此前被误杀的真实财经标题
+    "保险：增额终身寿险保证收益率下调至2.0%，多家险企调整产品",
+    "银保监会：理财产品不得宣传稳赚不赔",
+    "警方抓获喊单团伙，涉案金额超亿元",
+    "证监会提醒：投资者不要轻信“加微信入内部群”的荐股话术",
+    "某公司预增2100%涨停",
+    "Top 10 stocks account for 35% of S&P 500 weight, Goldman says",
+    "十大券商金股出炉，机构一致看好的方向有哪些",
+    "沪深300指数样本调整：12只纳入，12只剔除",
+    "上交所发布本周十一家公司股东大会召开公告：600519 000858 600036 601318 600900 601857 600028 601166 600276 600030 601398",
   ]
   it.each(fine)("%s", (title) => {
     expect(filterTitle(title, extractSymbols(title))).toBeNull()
+  })
+
+  it("独立审 S2：误杀修了之后，真正的软文仍然拦得住", () => {
+    for (const t of [
+      "这只股票保证收益，稳赚不赔，内部消息速看",
+      "100%涨停的牛股来了",
+      "Top 5 dividend stocks to buy in 2027",
+      "Best 10 stocks to buy right now",
+    ]) expect(filterTitle(t), t).not.toBeNull()
+    const many = Array.from({ length: ROUNDUP_SYMBOLS + 1 }, (_, i) => `S${i}.XNAS`)
+    expect(filterTitle("美股收盘：科技股集体上涨", many)).toBe("market_roundup")
+    expect(filterTitle("纳指成分股调整", many)).toBeNull() // 点名多、但没有汇总词
   })
 
   it("真实采集的 200 条财经快讯（test/fixtures/enrich-sample.json）一条都不过滤", () => {
