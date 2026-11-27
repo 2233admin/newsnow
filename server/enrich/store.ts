@@ -417,6 +417,13 @@ export class EnrichStore {
       AND (x.dup_of IS NULL OR EXISTS (SELECT 1 FROM items g WHERE g.seq = x.dup_of AND g.filter_reason IS NOT NULL))`
   }
 
+  /** 只把「失败到上限、一直没标成」的组的失败计数清零，回到待标注（已标好的不动，不重付费）。返回清掉的组数。 */
+  async resetFailedTags(maxAttempts: number): Promise<number> {
+    const row = await this.db.prepare(`SELECT COUNT(*) AS n FROM items WHERE tagged = 0 AND tag_attempts >= ?`).get(maxAttempts) as { n: number }
+    await this.db.prepare(`UPDATE items SET tag_attempts = 0 WHERE tagged = 0 AND tag_attempts >= ?`).run(maxAttempts)
+    return row.n
+  }
+
   /** 清掉标注，让它们回到待标注（改了分类表之后重标）。返回清掉的组数。 */
   async resetTags(): Promise<number> {
     const row = await this.db.prepare(`SELECT COUNT(*) AS n FROM items WHERE tagged > 0 OR tag_attempts > 0`).get() as { n: number }

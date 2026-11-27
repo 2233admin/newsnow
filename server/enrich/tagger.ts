@@ -31,8 +31,9 @@ export const TAG_MAX_OUTPUT_TOKENS = 4096
 export const DEFAULT_MAX_BATCHES_PER_RUN = 2
 /** 一组连续失败这么多次（模型没返回它、或返回的整条不可用）就不再自动重试。 */
 export const MAX_TAG_ATTEMPTS = 3
-/** 模型接口出错后，这么久之内不再调用。待定。 */
+/** 模型接口出错（或返回的东西整批没法用）后，这么久之内不再调用；连续再出错就翻倍，上限 MAX_ERROR_BACKOFF_MS，成功一次清零。待定。 */
 export const ERROR_BACKOFF_MS = 5 * 60_000
+export const MAX_ERROR_BACKOFF_MS = 60 * 60_000
 export const TAG_VERSION = 1
 const MAX_TITLE_CHARS = 200
 const MAX_GIST_CHARS = 80
@@ -222,6 +223,9 @@ export function parseTagResponse(text: string, ids: readonly string[], allowed: 
 
 // ---- 一轮
 
+/** 一批（不止一条）发出去，返回里一条能用的都没有：返回的不是 JSON、拒答、限流提示、id 全对不上……按模型接口异常处理（退避，不计各条的失败次数）。 */
+export class UnusableTagResponse extends Error {}
+
 export interface TaggerDeps {
   store: EnrichStore
   llm: LlmCall
@@ -249,6 +253,8 @@ export function createTagger(deps: TaggerDeps) {
   const clock = deps.clock ?? Date.now
   const batchSize = deps.batchSize ?? TAG_BATCH_SIZE
   let blockedUntil = 0
+  /** 连续出错 / 整批不可用的次数（退避翻倍用）；有一批标成了就清零 */
+  let strikes = 0
   let running: Promise<TagRunResult> | undefined
 
   async function tagBatch(market: Market, items: PendingTag[], impact: ImpactConfig): Promise<{ tagged: number, failed: number, unmatched: number }> {
@@ -257,6 +263,8 @@ export function createTagger(deps: TaggerDeps) {
     const text = await llm({ system, user, maxTokens: TAG_MAX_OUTPUT_TOKENS })
     const { tags, unmatched } = parseTagResponse(text, ids, impact[market].types.map(t => t.name))
     if (unmatched) logger.warn(`enrich tag：模型返回里有 ${unmatched} 条的 id 对不上本批，已丢弃（序号错位或重复）`)
+    // 整批没有一条能用（且不止一条，免得一条标题把自己卡死）：不是这些条目的错，不计失败次数，交给调用方退避（独立审 S5）
+    if (tags.size === 0 && items.length > 1) throw new UnusableTagResponse(`模型返回里没有一条可用的标注（${items.length} 条里解析出 0 条${unmatched ? `，${unmatched} 条 id 对不上` : ""}）`)
     const rows: TagRow[] = []
     const failed: number[] = []
     // 结果与失败计数都记在组的主条目上（groupId）；发给模型的标题是标注来源条目的（通常就是主条目，见 EnrichStore.pendingTags）
@@ -292,13 +300,16 @@ export function createTagger(deps: TaggerDeps) {
           const r = await tagBatch(market, items.slice(i, i + batchSize), impact)
           result.tagged += r.tagged
           result.failed += r.failed
+          if (r.tagged > 0) strikes = 0
           if (r.unmatched) result.unmatched = (result.unmatched ?? 0) + r.unmatched
         } catch (e) {
-          // 网络、HTTP 错误、限流：整轮中止并退避，不计失败次数（不是这些条目的错）
+          // 网络、HTTP 错误、限流、整批不可用：整轮中止并退避（连续出错翻倍），不计失败次数（不是这些条目的错）
           result.error = (e as Error).message
-          blockedUntil = clock() + ERROR_BACKOFF_MS
-          if (!(e instanceof LlmError)) logger.warn("enrich tag failed", e)
-          else logger.warn(`enrich tag：${result.error}（${ERROR_BACKOFF_MS / 60_000} 分钟内不再调用）`)
+          const backoff = Math.min(ERROR_BACKOFF_MS * 2 ** strikes, MAX_ERROR_BACKOFF_MS)
+          strikes++
+          blockedUntil = clock() + backoff
+          if (e instanceof LlmError || e instanceof UnusableTagResponse) logger.warn(`enrich tag：${result.error}（${backoff / 60_000} 分钟内不再调用）`)
+          else logger.warn("enrich tag failed", e)
           return result
         }
       }

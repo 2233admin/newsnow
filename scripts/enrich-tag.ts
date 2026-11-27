@@ -5,6 +5,7 @@
  * 用法：
  *   pnpm enrich:tag                       # 读 .data/db.sqlite3，把待标注的组标完（调模型）
  *   pnpm enrich:tag --status              # 只看进度，不调模型
+ *   pnpm enrich:tag --retry-failed        # 只把失败到上限放弃的组放回待标注（已标好的不动、不重付费），再接着标
  *   pnpm enrich:tag --redo                # 清掉全部标注与失败计数，回到待标注（改了分类表后）；加 --status 以外的参数会接着重标
  *   pnpm enrich:tag --db path/to/db.sqlite3
  *   pnpm enrich:tag --sources jin10,cls-telegraph   # 只标这几个来源（默认不限来源：脚本读不到用户源的分类；服务里是按 ENRICH_TAG_CATEGORIES 限的）
@@ -38,6 +39,7 @@ async function show(label: string) {
   const c = await store.tagCounts(MAX_TAG_ATTEMPTS)
   console.log(`${label}：已标 ${c.tagged} 组，待标 ${c.pending} 组，失败到上限放弃 ${c.gaveUp} 组`)
 }
+if (process.argv.includes("--retry-failed")) console.log(`把 ${await store.resetFailedTags(MAX_TAG_ATTEMPTS)} 组失败放弃的放回待标注（已标好的不动）`)
 if (process.argv.includes("--redo")) console.log(`清掉了 ${await store.resetTags()} 组的标注，回到待标注`)
 await show("现状")
 if (process.argv.includes("--status")) process.exit(0)

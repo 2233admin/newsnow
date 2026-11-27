@@ -238,12 +238,73 @@ describe("批量标注一轮：落库、失败计数、没配模型", () => {
     expect(res.items[1].tags).toBeNull()
   })
 
-  it("模型返回整个坏掉：不崩，字段保持 null，失败计数加一", async () => {
+  it("一批（多条）返回整个不可用（不是 JSON、拒答、id 全对不上）：不计失败次数，按接口异常退避，恢复后照常标；退避连续翻倍（独立审 S5）", async () => {
     const w = await world()
     await ingest(w, "cls-telegraph", titles(2), T0)
-    const tagger = createTagger({ store: w.enricher.store, llm: async () => "抱歉，我无法完成这个请求", sourceIds: async () => null })
-    expect(await tagger.run()).toMatchObject({ tagged: 0, failed: 2 })
+    let now = T0
+    let mode: "garbage" | "shifted" | "ok" = "garbage"
+    const llm = vi.fn<LlmCall>(async (req) => {
+      if (mode === "garbage") return "抱歉，我无法完成这个请求"
+      // 序号错位：把 id 换成 1、2（从 1 开始的序号）
+      if (mode === "shifted") return JSON.stringify(idsOf(req.user).map((_, k) => ({ id: k + 1, t: "公告", d: "+", g: "g", k: [] })))
+      return reply(req.user, [{ i: 0, t: "公告", d: "+", g: "甲", k: [] }, { i: 1, t: "公告", d: "-", g: "乙", k: [] }])
+    })
+    const tagger = createTagger({ store: w.enricher.store, llm, sourceIds: async () => null, clock: () => now })
+    expect(await tagger.run()).toMatchObject({ calls: 1, tagged: 0, failed: 0, error: expect.stringContaining("没有一条可用") })
     expect((await w.service.query({})).items.map(i => i.tags)).toEqual([null, null])
+    expect(await w.enricher.store.tagCounts(MAX_TAG_ATTEMPTS)).toEqual({ tagged: 0, pending: 2, gaveUp: 0 }) // 没计失败
+    expect(await tagger.run()).toEqual({ calls: 0, tagged: 0, failed: 0 }) // 退避中，不再每分钟发
+    now += ERROR_BACKOFF_MS - 1
+    expect((await tagger.run()).calls).toBe(0)
+    now += 1
+    mode = "shifted" // 第二次仍不可用（序号错位，全被丢弃并计数）：退避翻倍
+    expect(await tagger.run()).toMatchObject({ calls: 1, tagged: 0, failed: 0, error: expect.stringContaining("2 条 id 对不上") })
+    expect((await w.service.query({})).items.map(i => i.tags)).toEqual([null, null]) // 没有张冠李戴
+    now += ERROR_BACKOFF_MS * 2 - 1
+    expect((await tagger.run()).calls).toBe(0)
+    now += 1
+    mode = "ok"
+    expect(await tagger.run()).toMatchObject({ calls: 1, tagged: 2 })
+    expect(llm).toHaveBeenCalledTimes(3)
+    // 成功后清零：再出错又是 5 分钟起
+    await w.enricher.store.resetTags()
+    mode = "garbage"
+    expect((await tagger.run()).error).toBeDefined()
+    now += ERROR_BACKOFF_MS
+    expect((await tagger.run()).calls).toBe(1)
+  })
+
+  it("只有一条的批返回不可用：照旧计一次失败（免得一条毒标题永远卡住重试），到上限放弃", async () => {
+    const w = await world()
+    await ingest(w, "cls-telegraph", titles(1), T0)
+    const tagger = createTagger({ store: w.enricher.store, llm: async () => "我不能处理这条", sourceIds: async () => null })
+    expect(await tagger.run()).toMatchObject({ tagged: 0, failed: 1 })
+    for (let i = 1; i < MAX_TAG_ATTEMPTS; i++) await tagger.run()
+    expect(await w.enricher.store.tagCounts(MAX_TAG_ATTEMPTS)).toEqual({ tagged: 0, pending: 0, gaveUp: 1 })
+  })
+
+  it("resetFailedTags（--retry-failed）：只把失败放弃的放回待标注，已标好的不动、不重付费", async () => {
+    const w = await world()
+    await ingest(w, "cls-telegraph", titles(2), T0)
+    // 先让 0 号（新的那条）标成，另一条一直不返回：试满上限后放弃
+    const llm = vi.fn<LlmCall>(async (req) => {
+      const ids = idsOf(req.user)
+      return ids.length === 2 ? reply(req.user, [{ i: 0, t: "公告", d: "+", g: "已标好", k: [] }]) : "[]"
+    })
+    const tagger = createTagger({ store: w.enricher.store, llm, sourceIds: async () => null })
+    await tagger.run()
+    for (let i = 1; i < MAX_TAG_ATTEMPTS; i++) await tagger.run()
+    expect(await w.enricher.store.tagCounts(MAX_TAG_ATTEMPTS)).toEqual({ tagged: 1, pending: 0, gaveUp: 1 })
+    expect(await w.enricher.store.resetFailedTags(MAX_TAG_ATTEMPTS)).toBe(1)
+    expect(await w.enricher.store.tagCounts(MAX_TAG_ATTEMPTS)).toEqual({ tagged: 1, pending: 1, gaveUp: 0 })
+    expect((await w.service.query({})).items.map(i => i.tags?.gist ?? null)).toEqual(["已标好", null]) // 已标好的还在
+    // 再标一轮：只发那一条，不重发已标好的
+    const before = llm.mock.calls.length
+    await tagger.run()
+    expect(idsOf(llm.mock.calls[before][0].user)).toHaveLength(1)
+    // 对比 --redo：全清
+    expect(await w.enricher.store.resetTags()).toBeGreaterThanOrEqual(1)
+    expect((await w.service.query({})).items.every(i => i.tags === null)).toBe(true)
   })
 
   it("模型接口出错（限流、网络）：整轮中止、不计失败次数、退避一段时间，之后恢复", async () => {
