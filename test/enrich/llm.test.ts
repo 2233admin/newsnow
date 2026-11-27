@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest"
+import http from "node:http"
+import type { AddressInfo } from "node:net"
+import { describe, expect, it, vi } from "vitest"
+import { logger } from "../../server/utils/logger"
 import { LlmError, createLlm, readDeepLlm, readTagLlm } from "#/enrich/llm"
 
 const ok = (body: unknown, status = 200) => new Response(typeof body === "string" ? body : JSON.stringify(body), { status })
@@ -73,5 +76,128 @@ describe("两种协议的请求与响应", () => {
       expect(err).toBeInstanceOf(LlmError)
       expect(String(err.message)).not.toContain("sk-secret")
     }
+  })
+})
+
+describe("m2：错误信息不含 key、不含上游响应正文；不跟随重定向", () => {
+  const KEY = "sk-SECRETKEY-1234567890"
+  const cfg = { provider: "openai", apiKey: KEY, model: "m", baseUrl: "http://x.test/v1" } as const
+  const fail = async (make: (init: RequestInit) => Promise<Response>, c: Parameters<typeof createLlm>[0] = cfg) => {
+    const llm = createLlm(c, (async (_u: string, init: RequestInit) => make(init)) as unknown as typeof fetch)
+    return await llm({ user: "x", maxTokens: 10 }).catch(e => e)
+  }
+  const authOf = (init: RequestInit) => (init.headers as Record<string, string>).authorization
+
+  it("上游把 Authorization 原样回显在 401 正文里：message 只有状态码", async () => {
+    const err = await fail(async init => ok(`{"error":"bad auth: ${authOf(init)}"}`, 401))
+    expect(err).toBeInstanceOf(LlmError)
+    expect(err.message).toBe("模型接口返回 HTTP 401")
+    expect(err.message).not.toContain(KEY)
+  })
+
+  it("上游的错误类型（OpenAI error.type / Anthropic error.type）保留，message 字段不要；类型字段里塞了 key 的丢掉", async () => {
+    const a = await fail(async init => ok({ error: { type: "invalid_request_error", message: `Incorrect API key provided: ${authOf(init)}` } }, 401))
+    expect(a.message).toBe("模型接口返回 HTTP 401（invalid_request_error）")
+    const b = await fail(async () => ok({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, 401), { ...cfg, provider: "anthropic" })
+    expect(b.message).toBe("模型接口返回 HTTP 401（authentication_error）")
+    const c = await fail(async () => ok({ error: { type: KEY } }, 401))
+    expect(c.message).toBe("模型接口返回 HTTP 401")
+    const d = await fail(async () => ok({ error: { type: "含 空格 与 中文" } }, 500))
+    expect(d.message).toBe("模型接口返回 HTTP 500")
+  })
+
+  it("200 但不是 JSON、或没有文本：message 里不带响应正文", async () => {
+    const a = await fail(async init => ok(`<html>echo ${authOf(init)}</html>`))
+    expect(a.message).toBe("模型接口返回的不是 JSON")
+    const b = await fail(async init => ok({ choices: [], echo: authOf(init) }))
+    expect(b.message).toBe("模型接口的响应里没有文本")
+  })
+
+  it("网络错误的异常信息里万一带着 key（fetch 实现各异）也被抹掉", async () => {
+    const e = await fail(async (init) => {
+      throw new Error(`connect ECONNREFUSED headers=${authOf(init)}`)
+    })
+    expect(e.message).toContain("ECONNREFUSED")
+    expect(e.message).not.toContain(KEY)
+    expect(e.message).toContain("***")
+  })
+
+  it("请求带 redirect: \"error\"", async () => {
+    let seen: RequestInit | undefined
+    await fail(async (init) => {
+      seen = init
+      return ok({ choices: [{ message: { content: "x" } }] })
+    })
+    expect(seen!.redirect).toBe("error")
+  })
+
+  it("真实的 307 重定向到另一个 origin：x-api-key 与 authorization 都没有送过去，调用失败且 message 无 key", async () => {
+    const seen: { headers?: Record<string, unknown> } = {}
+    const evil = http.createServer((req, res) => {
+      seen.headers = { "x-api-key": req.headers["x-api-key"], "authorization": req.headers.authorization }
+      res.end("{}")
+    })
+    await new Promise<void>(r => evil.listen(0, "127.0.0.1", r))
+    const evilPort = (evil.address() as AddressInfo).port
+    const good = http.createServer((_req, res) => {
+      res.statusCode = 307
+      res.setHeader("location", `http://127.0.0.1:${evilPort}/x`)
+      res.end()
+    })
+    await new Promise<void>(r => good.listen(0, "localhost", r))
+    const goodPort = (good.address() as AddressInfo).port
+    try {
+      for (const provider of ["anthropic", "openai"] as const) {
+        seen.headers = undefined
+        const err = await createLlm({ provider, apiKey: KEY, model: "m", baseUrl: `http://localhost:${goodPort}` })({ user: "hi", maxTokens: 5 }).catch(e => e)
+        expect(err, provider).toBeInstanceOf(LlmError)
+        expect(err.message).not.toContain(KEY)
+        expect(seen.headers, `${provider}：重定向目标不该收到任何请求`).toBeUndefined()
+      }
+    } finally {
+      good.close()
+      evil.close()
+    }
+  })
+})
+
+describe("s8：openai 兼容的输出 token 上限字段名可配置", () => {
+  const env = { ENRICH_LLM_PROVIDER: "openai", ENRICH_LLM_API_KEY: "k", ENRICH_LLM_MODEL: "m" }
+  const bodyOf = async (cfg: Parameters<typeof createLlm>[0]) => {
+    let body: any
+    await createLlm(cfg, (async (_u: string, init: RequestInit) => {
+      body = JSON.parse(init.body as string)
+      return ok({ choices: [{ message: { content: "x" } }], content: [{ type: "text", text: "x" }] })
+    }) as unknown as typeof fetch)({ user: "u", maxTokens: 123 })
+    return body
+  }
+
+  it("默认 max_tokens（保持现状）；设成 max_completion_tokens 后只发这个字段", async () => {
+    const dflt = readTagLlm(env)!
+    expect(dflt.maxTokensField).toBeUndefined()
+    expect(await bodyOf(dflt)).toMatchObject({ max_tokens: 123 })
+    const cfg = readTagLlm({ ...env, ENRICH_LLM_MAX_TOKENS_FIELD: "max_completion_tokens" })!
+    const body = await bodyOf(cfg)
+    expect(body.max_completion_tokens).toBe(123)
+    expect(body).not.toHaveProperty("max_tokens")
+  })
+
+  it("不认识的值按默认并警告；anthropic 协议不受影响", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {})
+    try {
+      expect(readTagLlm({ ...env, ENRICH_LLM_MAX_TOKENS_FIELD: "max_output" })!.maxTokensField).toBeUndefined()
+      expect(String(warn.mock.calls[0][0])).toContain("max_output")
+    } finally {
+      warn.mockRestore()
+    }
+    const a = readTagLlm({ ...env, ENRICH_LLM_PROVIDER: "anthropic", ENRICH_LLM_MAX_TOKENS_FIELD: "max_completion_tokens" })!
+    expect(await bodyOf(a)).toMatchObject({ max_tokens: 123 })
+  })
+
+  it("深读沿用标注层的写法；深读换了模型就不沿用", () => {
+    const base = { ...env, ENRICH_LLM_MAX_TOKENS_FIELD: "max_completion_tokens" }
+    expect(readDeepLlm(base)!.maxTokensField).toBe("max_completion_tokens")
+    expect(readDeepLlm({ ...base, ENRICH_DEEP_LLM_MODEL: "other" })!.maxTokensField).toBeUndefined()
+    expect(readDeepLlm({ ...base, ENRICH_DEEP_LLM_MODEL: "other", ENRICH_DEEP_LLM_MAX_TOKENS_FIELD: "max_completion_tokens" })!.maxTokensField).toBe("max_completion_tokens")
   })
 })
