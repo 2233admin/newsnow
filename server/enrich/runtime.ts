@@ -6,6 +6,7 @@ import { createLlm, readDeepLlm, readTagLlm } from "./llm"
 import { createTagger, readTagCategories } from "./tagger"
 import type { Tagger } from "./tagger"
 import { readNetPolicy, safeFetchText } from "#/registry/net"
+import type { NetPolicy } from "#/registry/net"
 import { getRegistry } from "#/registry/runtime"
 
 /**
@@ -19,6 +20,13 @@ export interface EnrichRuntime {
   deep: DeepReader
   capabilities: { tagging: boolean, deep: boolean }
 }
+
+/**
+ * 深读抓原文的网络策略：固定不放行内网，与 USER_SOURCES_ALLOW_PRIVATE 无关。
+ * 那个开关是给「用户亲自填的订阅地址」（自建 RSSHub、内网 JSON 服务）放行的；深读抓的是条目里的链接，来自任意第三方 feed，
+ * 开关打开后若沿用，一个恶意 feed 把条目链接设成内网地址、再被点深读，内网页面正文就会交给模型、摘要回到响应里（SSRF 出口）。
+ */
+export const deepFetchPolicy = (policy: NetPolicy): NetPolicy => ({ ...policy, allowPrivate: false })
 
 let promise: Promise<EnrichRuntime> | undefined
 
@@ -42,7 +50,7 @@ export function getEnrichRuntime(): Promise<EnrichRuntime> {
       store,
       llm: deepLlm ? createLlm(deepLlm) : null,
       model: deepLlm?.model ?? null,
-      fetchPage: process.env.ENRICH_DEEP_FETCH_PAGE === "false" ? undefined : url => safeFetchText(url, policy),
+      fetchPage: process.env.ENRICH_DEEP_FETCH_PAGE === "false" ? undefined : url => safeFetchText(url, deepFetchPolicy(policy)),
     })
     return { tagger, deep, capabilities: { tagging: !!tagLlm, deep: !!deepLlm } }
   })().catch((e) => {
