@@ -74,13 +74,15 @@ export interface ParsedTag {
 }
 
 /**
- * 从模型的文本里捞出顶层的 JSON 对象（逐个解析，坏的跳过）。能处理：夹带说明文字、代码块围栏、数组被截断（最后一个对象没写完）、
- * 整体包在 {"results":[…]} 里。返回解析出的对象，按出现顺序。
+ * 从模型的文本里捞出「条目对象」（逐个解析，坏的跳过）。能处理：夹带说明文字、代码块围栏、数组被截断（最后一个对象没写完）、
+ * 整体包在 {"results":[…]} 里——包装对象闭合与否都行：用一个容器栈扫，只收「父容器是数组、且该数组在顶层或是顶层对象的直接取值」的对象，
+ * 所以截断时外层对象没闭合也不影响里面已经写完的元素（独立审 S3）。顶层的单个对象（深读返回）也收；
+ * 包装对象本身也会出现在结果里，由调用方按有没有自己要的字段（标注要有 id，深读要有 summary）挑。返回解析出的对象，按完成的先后。
  */
 export function extractObjects(text: string): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
-  let depth = 0
-  let start = -1
+  /** 当前打开的容器：`{` 或 `[`，记起点 */
+  const stack: { kind: "{" | "[", start: number }[] = []
   let inString = false
   let escaped = false
   for (let i = 0; i < text.length; i++) {
@@ -91,26 +93,26 @@ export function extractObjects(text: string): Record<string, unknown>[] {
       else if (c === "\"") inString = false
       continue
     }
-    if (c === "\"" && depth > 0) {
+    if (c === "\"" && stack.length > 0) {
       inString = true
-    } else if (c === "{") {
-      if (depth === 0) start = i
-      depth++
-    } else if (c === "}" && depth > 0) {
-      depth--
-      if (depth === 0 && start >= 0) {
-        try {
-          const v = JSON.parse(text.slice(start, i + 1))
-          if (v && typeof v === "object" && !Array.isArray(v)) out.push(v as Record<string, unknown>)
-        } catch {}
-        start = -1
+    } else if (c === "{" || c === "[") {
+      stack.push({ kind: c, start: i })
+    } else if ((c === "}" || c === "]") && stack.length > 0 && stack[stack.length - 1].kind === (c === "}" ? "{" : "[")) {
+      const top = stack.pop()!
+      if (c === "]") continue
+      const parent = stack[stack.length - 1]
+      // 顶层对象，或父容器是「顶层数组 / 顶层对象里的数组」的对象
+      const element = stack.length === 0 || (parent.kind === "[" && (stack.length === 1 || (stack.length === 2 && stack[0].kind === "{")))
+      if (!element) continue
+      let v: unknown
+      try {
+        v = JSON.parse(text.slice(top.start, i + 1))
+      } catch {
+        continue
       }
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue
+      out.push(v as Record<string, unknown>)
     }
-  }
-  // 整体包了一层 {"results":[…]}：顶层对象里没有 i，但有数组，往里取
-  if (out.length === 1 && !("i" in out[0])) {
-    const inner = Object.values(out[0]).find((v): v is unknown[] => Array.isArray(v) && v.some(x => !!x && typeof x === "object" && !Array.isArray(x)))
-    if (inner) return inner.filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x))
   }
   return out
 }

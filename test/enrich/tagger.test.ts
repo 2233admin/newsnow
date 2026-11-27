@@ -118,6 +118,20 @@ describe("批量标注的解析（用夹具模拟模型返回）", () => {
     expect(parseTagResponse(`{"results":${good}}`, 2, CN).size).toBe(2)
   })
 
+  it("包在 {\"results\":[…]} 里且被截断（外层对象没闭合）：写完的元素照收（独立审 S3）", () => {
+    const cut = `{"results":[{"i":0,"t":"公告","d":"+","g":"甲","k":["a"]},{"i":1,"t":"行业与题材","d":"-","g":"乙","k":[]},{"i":2,"t":"公`
+    expect([...parseTagResponse(cut, 3, CN).keys()]).toEqual([0, 1])
+    // 前面还夹着说明、外层带别的字段、外层闭合但数组里最后一个坏了，也一样
+    expect([...parseTagResponse(`好的：{"model":"x","results":[{"i":0,"t":"公告"},{"i":1,"t":"公告","g":"乙`, 2, CN).keys()]).toEqual([0])
+    expect([...parseTagResponse(`{"results":[{"i":0,"t":"公告"},{"i":1,"t":公告}]}`, 2, CN).keys()]).toEqual([0])
+  })
+
+  it("元素里嵌着的对象 / 数组不会被当成元素", () => {
+    const m = parseTagResponse(`[{"i":0,"t":"公告","k":["a"],"x":{"i":1,"t":"其他"},"y":[{"i":1,"t":"其他"}]},{"i":1,"t":"政策与监管"}]`, 2, CN)
+    expect(m.get(1)?.impact).toBe("政策与监管")
+    expect(m.get(0)?.impact).toBe("公告")
+  })
+
   it("extractObjects：转义的引号不会提前结束字符串", () => {
     expect(extractObjects(String.raw`[{"i":0,"g":"他说\"{好}\""}]`)).toEqual([{ i: 0, g: "他说\"{好}\"" }])
   })
