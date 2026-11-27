@@ -150,6 +150,19 @@ export function decodeCursor(raw: string): FeedCursor {
   throw new InputError("cursor 无效，请用上一页响应里的 nextCursor 原样传回")
 }
 
+/**
+ * 实时流（SSE）不支持的筛选：标注（impact / direction / theme）是条目入库之后异步补的，推出时还没有，没法按它筛；
+ * 对齐（market / tradeDate / tradeDateFrom / tradeDateTo）虽然入库时就算好了，但交易日是「按这个市场收盘后顺延」的结果，流里按条推没有「这一天的完整列表」的意思，
+ * 前端要的是列表接口。不静默忽略（前端若把同一份筛选同时传给列表与实时流，会以为已过滤，实际推出的是不相关的条目），直接 400。
+ * 时间类（from / to / since / cursor / limit）对实时流本来就没有意义，仍按文档忽略。
+ */
+export const STREAM_UNSUPPORTED = ["market", "tradeDate", "tradeDateFrom", "tradeDateTo", "impact", "direction", "theme"] as const
+
+export function assertStreamParams(raw: Raw) {
+  const given = STREAM_UNSUPPORTED.filter(k => raw[k] !== undefined && raw[k] !== null && raw[k] !== "" && !(Array.isArray(raw[k]) && !(raw[k] as unknown[]).length))
+  if (given.length) throw new InputError(`实时流不支持这些筛选：${given.join("、")}（标注是入库后异步补的、交易日是对齐后的结果；要按它们筛请用 GET /api/feed）`)
+}
+
 export function normalizeFeedParams(raw: Raw): FeedParams {
   const limitRaw = raw.limit
   let limit = DEFAULT_LIMIT

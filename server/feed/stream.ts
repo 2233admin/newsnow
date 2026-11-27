@@ -18,8 +18,8 @@ import type { IngestedItem, ObservationStore } from "#/collector/store"
  *   前端把 groupId 那一行的来源数改成 sourcesCount 即可，主条目的位置与内容不变。
  * - reset：客户端落后太多（或 Last-Event-ID 比库里最大的 seq 还大，库被换过），不补发了：
  *   请重新 GET /api/feed 取首屏，再用响应里的 latestSeq 当 Last-Event-ID 重连。{ latestSeq }。
- * 筛选：来源、分类、关键词、标的、includeInactive、expand、includeFiltered。tradeDate / market / impact / direction 对实时流不适用（标注是之后异步补的，条目推出时还没有，
- *   item 里的 tags 此时是 null；要带标注的请重新 GET /api/feed）。规则层过滤掉的条目默认不推，includeFiltered=1 才推。
+ * 筛选：来源、分类、关键词、标的、includeInactive、expand、includeFiltered。market / tradeDate / tradeDateFrom / tradeDateTo / impact / direction / theme 对实时流不适用，
+ *   端点收到它们回 400（标注是之后异步补的，条目推出时还没有，item 里的 tags 此时是 null；要带标注 / 按交易日的请 GET /api/feed）。规则层过滤掉的条目默认不推，includeFiltered=1 才推。
  * - ping：保活，id 是流已处理到的 seq（带了筛选时，没匹配的条目也会推进它，重连不必重扫）。
  *
  * 断线重连：客户端带 Last-Event-ID（浏览器的 EventSource 自动带；首次连接用 ?lastEventId=）。

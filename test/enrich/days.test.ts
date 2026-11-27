@@ -3,7 +3,7 @@ import { descriptors, feedWorld, ingest, pageAll, row } from "../feed/helpers"
 import type { LlmCall } from "#/enrich/llm"
 import { createTagger } from "#/enrich/tagger"
 import { MAX_DAYS_SPAN } from "#/feed/service"
-import { normalizeFeedParams } from "#/feed/params"
+import { assertStreamParams, normalizeFeedParams } from "#/feed/params"
 import { InputError } from "#/registry/spec"
 
 const bj = (iso: string) => Date.parse(`${iso}+08:00`)
@@ -215,5 +215,17 @@ describe("独立审 M6：GET /api/feed/days 与 GET /api/feed 的口径一致", 
     expect(one.days.length).toBeLessThanOrEqual(1)
     // 没有符合条件的来源：空，不报错
     expect((await w.service.days({ market: "cn", tradeDateFrom: "2026-11-20", tradeDateTo: "2026-12-10", source: "no-such-source" })).days).toEqual([])
+  })
+})
+
+describe("独立审 S9：实时流不支持的筛选直接拒绝", () => {
+  it("assertStreamParams：带了标注 / 对齐类筛选就抛 400 并点名；支持的与空值放行", () => {
+    for (const k of ["market", "tradeDate", "tradeDateFrom", "tradeDateTo", "impact", "direction", "theme"]) {
+      expect(() => assertStreamParams({ [k]: "x" }), k).toThrow(InputError)
+      expect(() => assertStreamParams({ [k]: "x" }), k).toThrow(k)
+    }
+    expect(() => assertStreamParams({ impact: "公告", direction: ["positive"] })).toThrow(/impact、direction/)
+    expect(() => assertStreamParams({ source: "jin10", q: "黄金", symbol: "600519.XSHG", expand: "1", includeFiltered: "1", from: "1", limit: "5" })).not.toThrow()
+    expect(() => assertStreamParams({ impact: "", market: [], theme: undefined })).not.toThrow()
   })
 })

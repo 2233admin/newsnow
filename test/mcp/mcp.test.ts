@@ -22,6 +22,7 @@ const { default: feedGet } = await import("#/api/feed/index.get")
 const { default: feedDeepGet } = await import("#/api/feed/deep.get")
 const { default: feedMetaGet } = await import("#/api/feed/meta.get")
 const { default: feedDaysGet } = await import("#/api/feed/days.get")
+const { default: feedStreamGet } = await import("#/api/feed/stream.get")
 const { getObservationStore } = await import("#/collector/runtime")
 
 let server: http.Server
@@ -37,6 +38,7 @@ beforeAll(async () => {
   router.get("/api/feed/deep", feedDeepGet)
   router.get("/api/feed/meta", feedMetaGet)
   router.get("/api/feed/days", feedDaysGet)
+  router.get("/api/feed/stream", feedStreamGet)
   const app = createApp()
   app.use(router)
   server = http.createServer(toNodeListener(app))
@@ -180,6 +182,18 @@ describe("mCP 入口（官方 SDK 客户端）", () => {
     expect(bad.data).toContain("market")
     expect((await fetch(`${base()}/api/feed/days?market=cn`)).status).toBe(400)
     await client.close()
+  })
+
+  it("独立审 S9：实时流收到它不支持的筛选（impact / direction / theme / market / tradeDate 区间）回 400，不静默忽略；支持的筛选照常打开", async () => {
+    for (const q of ["impact=公告", "direction=positive", "theme=白酒", "market=us", "tradeDate=2099-01-01", "tradeDateFrom=2026-11-01", "tradeDateTo=2026-11-30", "impact=公告&direction=positive&market=us&tradeDate=2099-01-01"]) {
+      const res = await fetch(`${base()}/api/feed/stream?${q}`)
+      expect(res.status, q).toBe(400)
+    }
+    const ac = new AbortController()
+    const ok = await fetch(`${base()}/api/feed/stream?source=jin10&q=黄金&includeFiltered=1`, { signal: ac.signal })
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get("content-type")).toContain("text/event-stream")
+    ac.abort()
   })
 
   it("feed_meta 与 /api/feed/meta 给出分类表；read_item_deep 没配模型时是 unavailable，seq 不存在是工具失败", async () => {
